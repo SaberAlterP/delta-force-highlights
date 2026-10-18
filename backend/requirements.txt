@@ -1,0 +1,19 @@
+# 推荐 Python 3.10 ~ 3.12（torch / easyocr 生态在这些版本上最稳）。
+# 若用 Python 3.13，请确保各包有对应 wheel（下方已放宽版本范围）。
+
+# Web 框架
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+
+# 视频 / 图像
+opencv-python-headless>=4.11.0      # 4.11 起提供 Python 3.13 wheel
+numpy>=1.26                          # 3.13 上会安装 numpy 2.x
+
+# OCR（依赖 torch / torchvision —— 请先按 CUDA 版本单独安装 PyTorch，见 README）
+easyocr>=1.7.1
+
+# 注意：
+#   torch / torchvision 不在此列出，避免误装 CPU 版本。
+#   请先执行（示例 cu121）：
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121

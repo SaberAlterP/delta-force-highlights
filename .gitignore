@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# 运行时存储（上传的视频 / 导出的片段 / 临时帧）
+backend/storage/
+
+# 编辑器
+.vscode/
+.idea/
+.DS_Store
+
+# ---- 发布前补充 ----
+outputs/
+work/
+.codex/
+.agents/
+.claude/
+.venv/
+node_modules/
+frontend/dist/
+__pycache__/
+*.log
+backend/server*.log
+backend/storage/
+backend/assets/id_templates/*.png
+backend/assets/id_templates/player_id.txt
+backend/tests/fixtures/killfeed/
