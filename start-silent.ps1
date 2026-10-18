@@ -1,6 +1,6 @@
 <#
 Silent local launcher called by the VBS entrypoint.
-It starts only services that are not already listening on ports 8000 and 5173.
+It starts the backend on port 8000 (which also serves the built web page) if not already running.
 #>
 [CmdletBinding()]
 param(
@@ -77,23 +77,16 @@ try {
         Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format s) backend started"
     }
 
-    if (-not (Test-LocalPort 5173)) {
-        $viteCmd = Join-Path $FrontendDir "node_modules\.bin\vite.cmd"
-        if (-not (Test-Path -LiteralPath $viteCmd)) { throw "Frontend dependency missing: $viteCmd" }
-        $cmdArgs = "/d /c call `"$viteCmd`" --host 127.0.0.1 --port 5173 --strictPort"
-        Start-Process -FilePath $env:ComSpec -WorkingDirectory $FrontendDir -WindowStyle Hidden -ArgumentList $cmdArgs
-        Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format s) frontend started"
-    }
+    # 网页由后端直接提供（frontend\dist），不再启动 Vite 开发服务器。
+    $dist = Join-Path $FrontendDir "dist\index.html"
+    if (-not (Test-Path -LiteralPath $dist)) { throw "Frontend not built: run 'npm run build' in frontend" }
 
     if (-not (Wait-ForHttp "http://127.0.0.1:8000/api/health")) {
-        throw "Backend did not start within 20 seconds. See backend\\storage\\tmp\\launcher.log."
-    }
-    if (-not (Wait-ForHttp "http://127.0.0.1:5173/")) {
-        throw "Frontend did not start within 20 seconds. See backend\\storage\\tmp\\launcher.log."
+        throw "Backend did not start within 20 seconds. See backend\storage\tmp\launcher.log."
     }
 
     if (-not $NoBrowser) {
-        Start-Process -FilePath "msedge.exe" -ArgumentList "http://127.0.0.1:5173/"
+        Start-Process "http://127.0.0.1:8000/"
     }
     Add-Content -LiteralPath $LogFile -Value "$(Get-Date -Format s) ready"
 } catch {

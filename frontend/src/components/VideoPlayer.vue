@@ -82,7 +82,7 @@ watch(() => store.seekTo, (v) => { if (v) seek(v.t) })
 watch(() => store.kills.length, () => renderMarkers())
 watch(() => store.kills.map(k => k.time).join(','), () => renderMarkers())
 
-function addKillHere() { store.addManualKill(currentTime.value) }
+function addSegmentHere() { store.addSegmentAt(currentTime.value) }
 
 // 区域叠加（百分比）
 function boxStyle(region) {
@@ -98,8 +98,9 @@ function boxStyle(region) {
 
 <template>
   <div class="panel player-panel">
-    <div ref="playerRoot" class="player-wrap">
-      <video ref="videoEl" class="video-js vjs-big-play-centered" :class="{ 'is-stretched': stretchPreview }"></video>
+    <!-- video.js 接管 <video> 后会改它的 class；动态 class 只能放在外层，否则会冲掉 vjs-tech 导致画面掉出播放框 -->
+    <div ref="playerRoot" class="player-wrap" :class="{ 'is-stretched': stretchPreview }">
+      <video ref="videoEl" class="video-js vjs-big-play-centered"></video>
 
       <div v-if="store.showRegions" class="region-overlay">
         <div class="rbox id" :style="boxStyle(store.regions.id_region)">
@@ -115,7 +116,7 @@ function boxStyle(region) {
       <span class="time muted">{{ fmtTime(currentTime) }} / {{ fmtTime(duration) }}</span>
       <span v-if="stretchPreview" class="preview-mode">4:3 → 16:9 拉伸预览</span>
       <span class="spacer"></span>
-      <button class="ghost" @click="addKillHere">＋ 在当前时间添加击杀</button>
+      <button class="primary" @click="addSegmentHere">＋ 在当前位置建片段</button>
     </div>
   </div>
 </template>
@@ -126,7 +127,7 @@ function boxStyle(region) {
 .player-wrap, .controls { width: min(100%, calc(65vh * 16 / 9)); margin-inline: auto; }
 .player-wrap { position: relative; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); }
 .video-js { width: 100%; border-radius: 8px; overflow: hidden; }
-:deep(.video-js.is-stretched .vjs-tech) { object-fit: fill !important; }
+.player-wrap.is-stretched :deep(.vjs-tech) { object-fit: fill !important; }
 
 .region-overlay {
   position: absolute; inset: 0; pointer-events: none;

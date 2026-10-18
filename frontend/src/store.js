@@ -10,6 +10,7 @@ const LS_CURRENT = 'df.current'      // 当前选中的 upload_id
 const LS_BASKET = 'df.basket'        // 剪辑列表（跨视频精选片段）
 const LS_STRETCH_169 = 'df.stretch169'
 const killsKey = (uploadId) => `df.kills.${uploadId}`
+const segmentsKey = (uploadId) => `df.segments.${uploadId}`
 const projectSaveTimers = new Map()
 
 function uid() {
@@ -39,7 +40,8 @@ export const useStore = defineStore('main', {
     upload: { busy: false, progress: 0, error: '' },
     analyze: { jobId: null, state: 'idle', progress: 0, message: '', error: '' },
 
-    kills: [],            // 当前视频的击杀
+    kills: [],            // 当前视频的击杀标记（只标注时间点）
+    segments: [],         // 当前视频的剪辑片段 [{id, start, end, label}]，与击杀标记独立
     projectSaveStatus: '',
     projectSaveError: '',
 
@@ -157,6 +159,8 @@ export const useStore = defineStore('main', {
         this.kills = data.kills
         localStorage.setItem(killsKey(data.video.upload_id), JSON.stringify(this.kills))
       } else this.ingestKills(data.kills || [])
+      this.segments = (data.segments || []).map(s => ({ id: s.id || uid(), start: s.start, end: s.end, label: s.label || '' }))
+      localStorage.setItem(segmentsKey(data.video.upload_id), JSON.stringify(this.segments))
       this.selectedRecordId = recordId
       this.projectSaveStatus = '已载入归档工程，原片未复制'
       this.projectSaveError = ''
@@ -181,6 +185,7 @@ export const useStore = defineStore('main', {
       localStorage.setItem(LS_CURRENT, upload_id)
       const sk = localStorage.getItem(killsKey(upload_id))
       this.kills = sk ? JSON.parse(sk) : []
+      this.segments = JSON.parse(localStorage.getItem(segmentsKey(upload_id)) || '[]')
       this.analyze = { jobId: null, state: 'idle', progress: 0, message: '', error: '' }
       this.currentTime = 0
     },
@@ -191,7 +196,7 @@ export const useStore = defineStore('main', {
       localStorage.removeItem(killsKey(upload_id))
       if (this.video?.upload_id === upload_id) {
         if (this.library.length) this.selectVideo(this.library[0].upload_id)
-        else { this.video = null; this.kills = []; localStorage.removeItem(LS_CURRENT) }
+        else { this.video = null; this.kills = []; this.segments = []; localStorage.removeItem(LS_CURRENT) }
       }
     },
 
@@ -199,8 +204,9 @@ export const useStore = defineStore('main', {
     forgetArchive(recordId, originalOnly = false) {
       const prefix = `bundle_${recordId}`
       const gone = (id) => originalOnly ? id === prefix : (id === prefix || id.startsWith(prefix + '_'))
-      if (this.video && gone(this.video.upload_id)) { this.video = null; this.kills = [] }
+      if (this.video && gone(this.video.upload_id)) { this.video = null; this.kills = []; this.segments = [] }
       localStorage.removeItem(killsKey(prefix))
+      localStorage.removeItem(segmentsKey(prefix))
       this.basket = this.basket.filter(b => !gone(b.upload_id))
       localStorage.setItem(LS_BASKET, JSON.stringify(this.basket))
     },
@@ -210,6 +216,7 @@ export const useStore = defineStore('main', {
       this.library = []
       this.video = null
       this.kills = []
+      this.segments = []
       this.basket = []
       this._persistLibrary()
       this._persistBasket()
@@ -221,14 +228,16 @@ export const useStore = defineStore('main', {
     persistKills() {
       if (this.video) {
         localStorage.setItem(killsKey(this.video.upload_id), JSON.stringify(this.kills))
+        localStorage.setItem(segmentsKey(this.video.upload_id), JSON.stringify(this.segments))
         if (this.video.workflow_id) {
           const meta = { ...this.video }
           const marks = JSON.parse(JSON.stringify(this.kills))
+          const segments = JSON.parse(JSON.stringify(this.segments))
           clearTimeout(projectSaveTimers.get(meta.upload_id))
           this.projectSaveStatus = '正在保存到归档文件夹…'
           projectSaveTimers.set(meta.upload_id, setTimeout(async () => {
             try {
-              await api.workflowSaveProject(meta.workflow_id, meta.upload_id, marks)
+              await api.workflowSaveProject(meta.workflow_id, meta.upload_id, marks, segments)
               this.projectSaveStatus = '已保存到归档文件夹'
               this.projectSaveError = ''
             } catch (e) {
@@ -312,6 +321,58 @@ export const useStore = defineStore('main', {
     },
 
     requestSeek(t) { this.seekTo = { t, ts: Date.now() } },
+
+    // -------- 片段（与击杀标记分开；导出按片段）--------
+    addSegmentAt(time) {
+      const t = this._clamp(time)
+      const pre = this.workflow?.settings.pre_seconds ?? this.config.clip_pre_seconds
+      const post = this.workflow?.settings.post_seconds ?? this.config.clip_post_seconds
+      let start = this._clamp(t - pre), end = this._clamp(t + post)
+      if (end - start < 1) end = this._clamp(start + Math.max(1, pre + post))
+      const seg = { id: uid(), start: +start.toFixed(2), end: +end.toFixed(2), label: '' }
+      this.segments.push(seg)
+      this.segments.sort((a, b) => a.start - b.start)
+      this.persistKills()
+      return seg
+    },
+
+    updateSegment(id, patch) {
+      const seg = this.segments.find(s => s.id === id)
+      if (!seg) return
+      Object.assign(seg, patch)
+      if (seg.end - seg.start < 0.1) seg.end = this._clamp(seg.start + 0.1)
+      this.persistKills()
+      const item = this.basket.find(b => b.upload_id === this.video?.upload_id && b.kill_id === id)
+      if (item) {
+        Object.assign(item, { time: seg.start, pre: 0, post: +(seg.end - seg.start).toFixed(3), label: seg.label || item.label })
+        this._persistBasket()
+      }
+    },
+
+    removeSegment(id) {
+      this.segments = this.segments.filter(s => s.id !== id)
+      this.basket = this.basket.filter(b => !(b.upload_id === this.video?.upload_id && b.kill_id === id))
+      this._persistBasket()
+      this.persistKills()
+    },
+
+    segmentInBasket(id) {
+      return !!(this.video && this.basket.find(b => b.upload_id === this.video.upload_id && b.kill_id === id))
+    },
+
+    addSegmentToBasket(seg) {
+      if (!this.video || this.segmentInBasket(seg.id)) return false
+      this.basket.push({
+        bid: uid(), upload_id: this.video.upload_id, filename: this.video.filename, duration: this.video.duration,
+        kill_id: seg.id, time: seg.start, pre: 0, post: +(seg.end - seg.start).toFixed(3), label: seg.label || '',
+      })
+      this._persistBasket()
+      return true
+    },
+
+    addAllSegmentsToBasket() {
+      return this.segments.filter(s => this.addSegmentToBasket(s)).length
+    },
 
     // -------- 剪辑列表（精选篮）--------
     _persistBasket() { localStorage.setItem(LS_BASKET, JSON.stringify(this.basket)) },

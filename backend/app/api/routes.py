@@ -175,6 +175,9 @@ def workflow_edit(record_id: str, values: dict):
         if index is None:
             source_id='bundle_'+record_id
             filename=Path(row['path']).name
+            # 整局默认带上自动剪出的高光范围，作为初始片段
+            defaults=[dict(id=f'auto{i+1}',start=f['start'],end=f['end'],label=f'高光 {i+1}')
+                      for i,f in enumerate((row['result'] or {}).get('files',[])) if 'start' in f and 'end' in f]
         else:
             files=(row['result'] or {}).get('files',[])
             if not isinstance(index,int) or not 0<=index<len(files):raise ValueError('高光不存在')
@@ -183,12 +186,14 @@ def workflow_edit(record_id: str, values: dict):
             filename=Path(item['path']).name
             marks=[dict(m,time=round(m['time']-item['start'],3)) for m in marks
                    if item['start']<=m['time']<=item['end']]
+            defaults=[]
         path=workflow.resolve_project_video(source_id)
         if path is None:raise HTTPException(404,'这份素材已清理或仍在整理，无法继续剪辑')
         meta=video.probe(path)
         saved=project['sources'].get(source_id)
         return dict(video=dict(meta,upload_id=source_id,filename=filename,workflow_id=record_id),
                     kills=saved['kills'] if saved else marks,project_saved=saved is not None,
+                    segments=saved['segments'] if saved and 'segments' in saved else defaults,
                     player_id=workflow.settings.player_id)
     except (OSError,ValueError,KeyError) as exc:raise HTTPException(422,str(exc))
 
@@ -199,7 +204,7 @@ def workflow_save_project(record_id: str, values: dict):
         with workflow._lock:
             row=workflow.recording(record_id)
             if not row:raise ValueError('归档不存在')
-            count=projects.save_marks(row,values.get('source_id',''),values.get('kills',[]))
+            count=projects.save_marks(row,values.get('source_id',''),values.get('kills',[]),values.get('segments'))
         return dict(saved=count)
     except (OSError,ValueError,KeyError,TypeError) as exc:raise HTTPException(422,str(exc))
 

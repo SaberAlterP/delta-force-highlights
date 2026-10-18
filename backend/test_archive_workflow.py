@@ -230,6 +230,15 @@ class ArchiveWorkflowTests(TestCase):
             data=routes.workflow_edit(row['id'],{})
             self.assertEqual(data['video']['upload_id'],'bundle_'+row['id'])
             self.assertEqual(len(data['kills']),2)
+            # 整局默认带上自动高光范围；保存后再打开读回用户的片段
+            self.assertEqual([(s['start'],s['end']) for s in data['segments']],[(10,115)])
+            routes.workflow_save_project(row['id'],dict(source_id='bundle_'+row['id'],kills=data['kills'],
+                segments=[dict(id='a',start=40,end=60,label='我的片段')]))
+            again=routes.workflow_edit(row['id'],{})
+            self.assertEqual(again['segments'],[dict(id='a',start=40.0,end=60.0,label='我的片段')])
+            with self.assertRaises(Exception):
+                routes.workflow_save_project(row['id'],dict(source_id='bundle_'+row['id'],kills=[],
+                    segments=[dict(start=60,end=40)]))
         self.assertEqual(set(self.root.rglob('*.mp4')),before)
 
     def test_manual_delete_original_keeps_highlights_and_records(self):

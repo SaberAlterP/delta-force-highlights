@@ -41,7 +41,7 @@ const zipUrl = computed(() => api.exportZipUrl(jobId.value))
     </div>
 
     <div v-if="count === 0" class="muted empty">
-      还没有精选片段。在中间「时刻标记管理」里点 ➕ 加入片段，可以来自多个视频。
+      导出列表是空的。在「片段」里点「加入导出」，可以把多局的片段放在一起导出。
     </div>
 
     <template v-else>
