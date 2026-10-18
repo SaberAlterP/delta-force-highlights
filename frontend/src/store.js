@@ -7,7 +7,6 @@ const LS_REGIONS_VERSION = 'df.regionsVersion'
 const REGIONS_VERSION = '4'
 const LS_LIBRARY = 'df.library'      // 视频库 [VideoMeta]
 const LS_CURRENT = 'df.current'      // 当前选中的 upload_id
-const LS_BASKET = 'df.basket'        // 剪辑列表（跨视频精选片段）
 const LS_STRETCH_169 = 'df.stretch169'
 const killsKey = (uploadId) => `df.kills.${uploadId}`
 const segmentsKey = (uploadId) => `df.segments.${uploadId}`
@@ -45,7 +44,6 @@ export const useStore = defineStore('main', {
     projectSaveStatus: '',
     projectSaveError: '',
 
-    basket: [],           // 剪辑列表（跨视频）[{bid, upload_id, filename, duration, kill_id, time, pre, post, label}]
 
     stretch169: localStorage.getItem(LS_STRETCH_169) !== 'false',
 
@@ -65,13 +63,7 @@ export const useStore = defineStore('main', {
   getters: {
     selectedKills: (s) => s.kills.filter(k => k.selected),
     sortedKills: (s) => [...s.kills].sort((a, b) => a.time - b.time),
-    basketByVideo: (s) => {
-      const groups = {}
-      for (const b of s.basket) {
-        (groups[b.upload_id] ||= { filename: b.filename, items: [] }).items.push(b)
-      }
-      return groups
-    },
+    exportSegments: (s) => [...s.segments].filter(x => x.selected !== false).sort((a, b) => a.start - b.start),
   },
 
   actions: {
@@ -105,7 +97,7 @@ export const useStore = defineStore('main', {
           try { this.library = [JSON.parse(oldV)]; this._persistLibrary() } catch (e) { /* ignore */ }
         }
       }
-      this.basket = JSON.parse(localStorage.getItem(LS_BASKET) || '[]')
+      localStorage.removeItem('df.basket')  // 旧版跨视频导出列表，已不再使用
       // 打开页面默认看对局列表，不自动载入上次上传的录像
     },
 
@@ -159,7 +151,7 @@ export const useStore = defineStore('main', {
         this.kills = data.kills
         localStorage.setItem(killsKey(data.video.upload_id), JSON.stringify(this.kills))
       } else this.ingestKills(data.kills || [])
-      this.segments = (data.segments || []).map(s => ({ id: s.id || uid(), start: s.start, end: s.end, label: s.label || '' }))
+      this.segments = (data.segments || []).map(s => ({ id: s.id || uid(), start: s.start, end: s.end, label: s.label || '', selected: s.selected !== false }))
       localStorage.setItem(segmentsKey(data.video.upload_id), JSON.stringify(this.segments))
       this.selectedRecordId = recordId
       this.projectSaveStatus = '已载入归档工程，原片未复制'
@@ -207,8 +199,6 @@ export const useStore = defineStore('main', {
       if (this.video && gone(this.video.upload_id)) { this.video = null; this.kills = []; this.segments = [] }
       localStorage.removeItem(killsKey(prefix))
       localStorage.removeItem(segmentsKey(prefix))
-      this.basket = this.basket.filter(b => !gone(b.upload_id))
-      localStorage.setItem(LS_BASKET, JSON.stringify(this.basket))
     },
 
     clearVideo() {
@@ -217,9 +207,7 @@ export const useStore = defineStore('main', {
       this.video = null
       this.kills = []
       this.segments = []
-      this.basket = []
       this._persistLibrary()
-      this._persistBasket()
       localStorage.removeItem(LS_CURRENT)
       this.analyze = { jobId: null, state: 'idle', progress: 0, message: '', error: '' }
       this.export = { jobId: null, state: 'idle', progress: 0, message: '', error: '', files: [], hasMerged: false }
@@ -298,16 +286,6 @@ export const useStore = defineStore('main', {
       if (k) {
         Object.assign(k, patch)
         this.persistKills()
-        const basketItem = this.basket.find(b => b.upload_id === this.video?.upload_id && b.kill_id === id)
-        if (basketItem) {
-          Object.assign(basketItem, {
-            time: k.time,
-            pre: k.pre,
-            post: k.post,
-            label: k.label || basketItem.label,
-          })
-          this._persistBasket()
-        }
       }
     },
 
@@ -329,7 +307,7 @@ export const useStore = defineStore('main', {
       const post = this.workflow?.settings.post_seconds ?? this.config.clip_post_seconds
       let start = this._clamp(t - pre), end = this._clamp(t + post)
       if (end - start < 1) end = this._clamp(start + Math.max(1, pre + post))
-      const seg = { id: uid(), start: +start.toFixed(2), end: +end.toFixed(2), label: '' }
+      const seg = { id: uid(), start: +start.toFixed(2), end: +end.toFixed(2), label: '', selected: true }
       this.segments.push(seg)
       this.segments.sort((a, b) => a.start - b.start)
       this.persistKills()
@@ -342,85 +320,16 @@ export const useStore = defineStore('main', {
       Object.assign(seg, patch)
       if (seg.end - seg.start < 0.1) seg.end = this._clamp(seg.start + 0.1)
       this.persistKills()
-      const item = this.basket.find(b => b.upload_id === this.video?.upload_id && b.kill_id === id)
-      if (item) {
-        Object.assign(item, { time: seg.start, pre: 0, post: +(seg.end - seg.start).toFixed(3), label: seg.label || item.label })
-        this._persistBasket()
-      }
     },
 
     removeSegment(id) {
       this.segments = this.segments.filter(s => s.id !== id)
-      this.basket = this.basket.filter(b => !(b.upload_id === this.video?.upload_id && b.kill_id === id))
-      this._persistBasket()
       this.persistKills()
     },
 
-    segmentInBasket(id) {
-      return !!(this.video && this.basket.find(b => b.upload_id === this.video.upload_id && b.kill_id === id))
-    },
-
-    addSegmentToBasket(seg) {
-      if (!this.video || this.segmentInBasket(seg.id)) return false
-      this.basket.push({
-        bid: uid(), upload_id: this.video.upload_id, filename: this.video.filename, duration: this.video.duration,
-        kill_id: seg.id, time: seg.start, pre: 0, post: +(seg.end - seg.start).toFixed(3), label: seg.label || '',
-      })
-      this._persistBasket()
-      return true
-    },
-
-    addAllSegmentsToBasket() {
-      return this.segments.filter(s => this.addSegmentToBasket(s)).length
-    },
-
-    // -------- 剪辑列表（精选篮）--------
-    _persistBasket() { localStorage.setItem(LS_BASKET, JSON.stringify(this.basket)) },
-
-    addToBasket(kill) {
-      if (!this.video) return false
-      if (this.basket.find(b => b.upload_id === this.video.upload_id && b.kill_id === kill.id)) {
-        return false // 已在列表里
-      }
-      this.basket.push({
-        bid: uid(),
-        upload_id: this.video.upload_id,
-        filename: this.video.filename,
-        duration: this.video.duration,
-        kill_id: kill.id,
-        time: kill.time,
-        pre: kill.pre,
-        post: kill.post,
-        label: kill.label || '',
-      })
-      this._persistBasket()
-      return true
-    },
-
-    addSelectedToBasket() {
-      let n = 0
-      this.selectedKills.forEach(k => { if (this.addToBasket(k)) n++ })
-      return n
-    },
-
-    removeFromBasket(bid) {
-      this.basket = this.basket.filter(b => b.bid !== bid)
-      this._persistBasket()
-    },
-
-    clearBasket() { this.basket = []; this._persistBasket() },
-
-    updateBasketItem(bid, patch) {
-      const b = this.basket.find(x => x.bid === bid)
-      if (b) { Object.assign(b, patch); this._persistBasket() }
-    },
-
-    basketRange(b) {
-      return { start: Math.max(0, b.time - b.pre), end: Math.min(b.duration || 1e9, b.time + b.post) }
-    },
-
-    inBasket(killId) {
-      return !!(this.video && this.basket.find(b => b.upload_id === this.video.upload_id && b.kill_id === killId))
+    setAllSegmentsSelected(value) {
+      this.segments.forEach(s => { s.selected = value })
+      this.persistKills()
     },
 
     // -------- 上传 --------
@@ -483,23 +392,23 @@ export const useStore = defineStore('main', {
       })
     },
 
-    // -------- 导出（从剪辑列表）--------
+    // -------- 导出：只导出当前素材里勾选的片段；归档素材存回它的集锦包 --------
     async runExport({ merge = false, accurate = false, stretch = this.stretch169 } = {}) {
-      if (!this.basket.length) return
-      this.export = { jobId: null, state: 'running', progress: 0, message: '正在导出…', error: '', files: [], hasMerged: false }
+      const segments = this.exportSegments
+      if (!this.video || !segments.length) return
+      this.export = { jobId: null, state: 'running', progress: 0, message: '正在导出…', error: '', files: [], hasMerged: false,
+        uploadId: this.video.upload_id, workflowId: this.video.workflow_id || null }
       try {
-        const clips = this.basket.map((b, i) => {
-          const { start, end } = this.basketRange(b)
-          return {
-            upload_id: b.upload_id,
-            kill_id: b.kill_id,
-            label: b.label || `clip_${String(i + 1).padStart(2, '0')}`,
-            start, end,
-          }
-        })
+        const clips = segments.map((seg, i) => ({
+          upload_id: this.video.upload_id,
+          kill_id: seg.id,
+          label: seg.label || `片段${String(i + 1).padStart(2, '0')}`,
+          start: seg.start, end: seg.end,
+        }))
         const { job_id } = await api.startExport({ clips, merge, accurate, stretch_169: stretch })
         this.export.jobId = job_id
         await this._pollExport(job_id)
+        if (this.export.workflowId) await this.refreshWorkflow()
       } catch (e) {
         this.export.state = 'error'
         this.export.error = e?.response?.data?.detail || e.message || '导出失败'

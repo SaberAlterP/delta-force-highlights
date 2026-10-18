@@ -235,7 +235,7 @@ class ArchiveWorkflowTests(TestCase):
             routes.workflow_save_project(row['id'],dict(source_id='bundle_'+row['id'],kills=data['kills'],
                 segments=[dict(id='a',start=40,end=60,label='我的片段')]))
             again=routes.workflow_edit(row['id'],{})
-            self.assertEqual(again['segments'],[dict(id='a',start=40.0,end=60.0,label='我的片段')])
+            self.assertEqual(again['segments'],[dict(id='a',start=40.0,end=60.0,label='我的片段',selected=True)])
             with self.assertRaises(Exception):
                 routes.workflow_save_project(row['id'],dict(source_id='bundle_'+row['id'],kills=[],
                     segments=[dict(start=60,end=40)]))

@@ -392,6 +392,9 @@ def analyze_status(job_id: str):
 def start_export(req: ExportRequest):
     if not req.clips:
         raise HTTPException(400, "没有选择任何片段")
+    # 只导出同一段素材里的片段；归档素材的结果存回它的集锦包
+    if len({c.upload_id for c in req.clips}) > 1:
+        raise HTTPException(400, "一次只能导出同一段素材里的片段")
 
     specs = []
     for c in req.clips:

@@ -169,7 +169,7 @@ onBeforeUnmount(endDrag)
         <button v-for="k in kills" :key="k.id" class="marker" :class="markerKind(k)" :style="{ left: pct(k.time) + '%' }"
                 :title="markerTitle(k)" :aria-label="markerTitle(k)" @click.stop="store.requestSeek(k.time)"></button>
 
-        <div v-for="(seg, index) in segments" :key="seg.id" class="clip" :class="{ focused: focusedId === seg.id }"
+        <div v-for="(seg, index) in segments" :key="seg.id" class="clip" :class="{ focused: focusedId === seg.id, skip: seg.selected === false }"
              :style="{ left: pct(seg.start) + '%', width: pct(seg.end - seg.start) + '%' }"
              :title="`片段 ${index + 1}  ${preciseTime(seg.start)} – ${preciseTime(seg.end)}`"
              @mousedown="startDrag($event, seg, 'move')" @click.stop>
@@ -191,8 +191,7 @@ onBeforeUnmount(endDrag)
       <button class="ghost tiny" title="快捷键 O" @click="setEdge('end', store.currentTime)">设到播放头</button>
       <span class="muted len">{{ (focused.end - focused.start).toFixed(1) }} 秒</span>
       <input class="seg-label" :value="focused.label" placeholder="片段名（可选）" @change="store.updateSegment(focused.id, { label: $event.target.value })" />
-      <button v-if="store.segmentInBasket(focused.id)" class="ghost tiny" disabled>✓ 已在导出列表</button>
-      <button v-else class="ghost tiny" @click="store.addSegmentToBasket(focused)">加入导出列表</button>
+      <label class="export-chk"><input type="checkbox" :checked="focused.selected !== false" @change="store.updateSegment(focused.id, { selected: $event.target.checked })" /> 导出</label>
     </div>
     <p v-else class="tips muted">
       <template v-if="!segments.length">还没有片段。把播放头移到想剪的位置，点「在当前位置建片段」。</template>
@@ -250,5 +249,7 @@ onBeforeUnmount(endDrag)
 .precision-strip input[type='number'] { width: 82px; padding: 4px 6px; font: 11px Consolas, monospace; }
 .len { font-size: 11px; white-space: nowrap; }
 .seg-label { flex: 1; min-width: 120px; padding: 4px 8px; font-size: 12px; }
+.export-chk { display: flex; align-items: center; gap: 5px; font-size: 12px; cursor: pointer; } .export-chk input { accent-color: var(--accent); }
+.clip.skip { opacity: .45; border-style: dashed; }
 .tips { margin: 8px 2px 0; font-size: 11px; line-height: 1.7; }
 </style>

@@ -37,7 +37,8 @@ def _clean_segments(segments):
         start,end=float(seg['start']),float(seg['end'])
         if not (math.isfinite(start) and math.isfinite(end) and 0<=start<end):raise ValueError('无效的片段范围')
         label=str(seg.get('label',''))[:200]
-        clean.append(dict(id=str(seg.get('id',''))[:40],start=round(start,3),end=round(end,3),label=label))
+        clean.append(dict(id=str(seg.get('id',''))[:40],start=round(start,3),end=round(end,3),label=label,
+                          selected=seg.get('selected') is not False))
     return clean
 
 

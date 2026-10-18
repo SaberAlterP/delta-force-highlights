@@ -59,7 +59,7 @@ class JobStatus(BaseModel):
 
 
 class ClipSpec(BaseModel):
-    upload_id: str               # 该片段来自哪个视频（支持跨视频导出）
+    upload_id: str               # 片段所在的素材（一次导出只允许同一段素材）
     kill_id: str = ""
     label: str = ""
     start: float

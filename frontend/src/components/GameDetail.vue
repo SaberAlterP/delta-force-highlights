@@ -6,7 +6,7 @@ import { recordedAt, statusInfo, killCount } from '../records'
 import VideoPlayer from './VideoPlayer.vue'
 import ClipTimeline from './ClipTimeline.vue'
 import KillList from './KillList.vue'
-import ClipBasket from './ClipBasket.vue'
+import ExportPanel from './ExportPanel.vue'
 
 const store = useStore()
 const busy = ref(false)
@@ -146,7 +146,7 @@ function removeBundle() {
       <ClipTimeline />
       <div class="work">
         <KillList />
-        <ClipBasket />
+        <ExportPanel />
       </div>
       <p v-if="editingThis" class="foot muted">标记的修改会自动存回这局的文件夹（{{ store.projectSaveStatus || '剪辑工程.json' }}）。手动导出的片段保存在文件夹里的「手动剪辑」。</p>
     </template>
