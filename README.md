@@ -20,8 +20,8 @@
 ## 安装
 
 ```powershell
-git clone <仓库地址>
-cd <仓库目录>
+git clone https://github.com/SaberAlterP/delta-force-highlights.git
+cd delta-force-highlights
 
 # 后端
 cd backend
