@@ -43,6 +43,11 @@ class WorkflowSettings:
     stretch_169: bool = True
     prefer_official_events: bool = True
     use_gpu: bool = True
+    # 什么时候处理新录像：idle = 没在玩游戏时（默认）；auto = 录完立即；manual = 只在网页里点开始
+    process_mode: str = 'idle'
+    pause_on_fullscreen: bool = True     # 任何全屏程序（浏览器除外）也算在玩
+    extra_game_processes: str = ''       # 额外的游戏进程名，逗号分隔
+    idle_wait_minutes: float = 3         # 游戏关掉后再等几分钟才开始
     wegame_db_dir: str = ''          # 留空 = 自动使用 %APPDATA%\icreate-pc-df\wonderfulDb
 
     @property
@@ -62,6 +67,10 @@ class WorkflowSettings:
             root, output = Path(self.watch_root).resolve(), Path(self.output_root).resolve()
             if root == output or output.is_relative_to(root) or root.is_relative_to(output):
                 raise ValueError('集锦目录和录像目录不能相同，也不能互相包含')
+        if self.process_mode not in ('idle', 'auto', 'manual'):
+            raise ValueError('处理时机只能是 idle / auto / manual')
+        if not 0 <= self.idle_wait_minutes <= 120:
+            raise ValueError('游戏结束后的等待时间应在 0 到 120 分钟之间')
         if not (1 <= self.window_seconds <= 600 and 2 <= self.min_operators <= 20):
             raise ValueError('多杀时间窗或人数无效')
         if not (0 <= self.pre_seconds <= 300 and 0 <= self.post_seconds <= 300):
@@ -123,6 +132,9 @@ class WorkflowService:
         self._thread = None
         self._active = None
         self.last_error = ''
+        self.paused = ''          # 非空时说明为什么暂停处理（例如正在玩游戏）
+        self._last_game = 0.      # 最近一次检测到游戏的时间
+        self._yielded = False     # 本次识别是否因游戏开始而中断
         self._last_cache_cleanup = 0
         self.settings = WorkflowSettings()
         if self.settings_path.exists():
@@ -202,7 +214,7 @@ class WorkflowService:
                     db.execute('INSERT INTO recordings (id,path,fingerprint,status,discovered,stable_since) '
                                'VALUES (?,?,?,?,?,?)',
                                (uuid.uuid4().hex, str(path), fp,
-                                'historical' if first else 'waiting', now, now))
+                                'historical' if first else ('manual' if self.settings.process_mode == 'manual' else 'waiting'), now, now))
                 count += 1
             if first:
                 db.execute('INSERT INTO metadata VALUES (?,?)', (key, str(now)))
@@ -225,7 +237,7 @@ class WorkflowService:
                 try:item['manual_exports']=projects.manual_exports(item)
                 except (OSError,ValueError):pass
         return dict(settings=asdict(self.settings), records=records,
-                    active=self._active, running=bool(self._thread and self._thread.is_alive()),
+                    active=self._active, paused=self.paused, running=bool(self._thread and self._thread.is_alive()),
                     error=self.last_error, cache=cache.last)
 
     def recording(self,record_id):
@@ -283,6 +295,7 @@ class WorkflowService:
             db.execute("UPDATE recordings SET status='processing' WHERE id=? AND status='waiting'",
                        (row['id'],))
             self._active = dict(id=row['id'], path=str(source), progress=0., message='读取录像信息')
+            self._yielded = False
         try:
             meta = video.probe(source)
             if meta['duration'] <= 0 or meta['width'] <= 0 or meta['height'] <= 0:
@@ -405,7 +418,10 @@ class WorkflowService:
                     closed=_closed_by_recorder,busy=jobs.has_active())
                 cache.deduplicate_legacy_exports(result['files'],closed=_closed_by_recorder)
         except CancelledError:
-            self._update(row['id'], status='waiting', error='服务停止，下次启动继续')
+            if self._yielded:
+                self._update(row['id'], status='waiting', error='开始玩游戏了，识别已暂停，玩完后自动重新开始')
+            else:
+                self._update(row['id'], status='waiting', error='服务停止，下次启动继续')
         except wegame.DatabaseBusy as exc:
             self._update(row['id'],status='waiting',stable_since=time.time(),error=str(exc))
         except Exception as exc:
@@ -414,13 +430,56 @@ class WorkflowService:
             self._active = None
             self.notify_pending()
 
+    def game_reason(self):
+        from .activity import detector
+        s = self.settings
+        return detector.reason(s.extra_game_processes, s.pause_on_fullscreen)
+
+    def _may_process(self, now=None):
+        """idle 模式下：正在玩游戏或刚玩完不久就先不处理。"""
+        now = time.time() if now is None else now
+        if self.settings.process_mode != 'idle':
+            self.paused = ''
+            return True
+        reason = self.game_reason()
+        if reason:
+            self._last_game = now
+            self.paused = reason + '，玩完再处理'
+            return False
+        wait = self.settings.idle_wait_minutes * 60 - (now - self._last_game)
+        if self._last_game and wait > 0:
+            self.paused = f'游戏刚结束，{max(1, round(wait / 60))} 分钟后开始处理'
+            return False
+        self.paused = ''
+        return True
+
+    def _should_yield(self):
+        # 识别中途开了游戏：中断这次识别，放回队列，玩完再从头处理
+        if self._stop.is_set():
+            return True
+        if self.settings.process_mode == 'idle' and self.game_reason():
+            self._yielded = True
+            self._last_game = time.time()
+            return True
+        return False
+
+    def start_now(self, record_ids=None):
+        """手动开始：把「等你开始」的录像放进队列（保留期规则与自动处理相同）。"""
+        with self._lock, self._db() as db:
+            if record_ids is None:
+                rows = db.execute("SELECT id FROM recordings WHERE status='manual'").fetchall()
+                record_ids = [r['id'] for r in rows]
+            for rid in record_ids:
+                db.execute("UPDATE recordings SET status='waiting', error=NULL WHERE id=? AND status='manual'", (rid,))
+        return len(record_ids)
+
     def _progress(self, p, message):
         if self._active:
             self._active = self._active | dict(progress=p, message=message)
 
     def _analyze_source(self, source, settings, scan_windows=None):
         return workers.analyze_isolated(source, DetectParams(player_id=settings.player_id,scan_windows=scan_windows,use_gpu=settings.use_gpu),
-                                        progress_cb=self._progress,cancel_cb=self._stop.is_set)
+                                        progress_cb=self._progress,cancel_cb=self._should_yield)
 
     def _prepare_bundle(self,row,result,settings):
         root=Path(settings.output_root).resolve()
@@ -789,6 +848,7 @@ class WorkflowService:
             try:
                 if self.settings.enabled and self.settings.configured:
                     self.discover()
+                if self.settings.configured and self._may_process():
                     self.process_next()
                 self.cleanup_due()
                 self.cleanup_cache()

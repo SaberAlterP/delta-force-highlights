@@ -36,11 +36,12 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
         <div><b>三角洲 · 多杀集锦</b><small>打完一局，自动剪好高光</small></div>
       </div>
       <button v-if="settings" class="status" :class="{ live: settings.enabled && ready }" @click="store.panel = 'settings'"
-              :title="settings.enabled ? '点击打开设置' : '自动监控已暂停，点击打开设置'">
+              :title="store.workflow.paused || (settings.enabled ? '点击打开设置' : '自动监控已暂停，点击打开设置')">
         <i></i>
         <template v-if="!ready">还没设置好</template>
         <template v-else-if="!settings.enabled">监控已暂停</template>
         <template v-else-if="store.workflow.active">正在处理 {{ Math.round(store.workflow.active.progress * 100) }}%</template>
+        <template v-else-if="store.workflow.paused">⏸ 暂停中</template>
         <template v-else>监控中</template>
         <span v-if="queued > 1" class="q">队列 {{ queued }}</span>
       </button>

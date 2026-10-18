@@ -1,6 +1,7 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useStore } from '../store'
+import { api } from '../api'
 import { recordedAt, statusInfo, killCount } from '../records'
 
 const store = useStore()
@@ -10,10 +11,16 @@ const all = computed(() => (store.workflow?.records || []).filter(r => r.status 
 const lists = computed(() => ({
   all: all.value.filter(r => r.status !== 'historical'),
   highlights: all.value.filter(r => r.result?.summary?.has_highlights),
-  queue: all.value.filter(r => ['waiting', 'processing', 'error', 'review'].includes(r.status)),
+  queue: all.value.filter(r => ['manual', 'waiting', 'processing', 'error', 'review'].includes(r.status)),
   history: all.value.filter(r => r.status === 'historical'),
 }))
 const shown = computed(() => lists.value[filter.value])
+const manualCount = computed(() => all.value.filter(r => r.status === 'manual').length)
+const starting = ref(false)
+async function startAll() {
+  starting.value = true
+  try { await api.workflowStart(); await store.refreshWorkflow() } finally { starting.value = false }
+}
 const tabs = [['all', '全部'], ['highlights', '有集锦'], ['queue', '待处理'], ['history', '未处理的旧录像']]
 
 function day(r) {
@@ -30,6 +37,11 @@ function day(r) {
         {{ label }}<i v-if="lists[key].length">{{ lists[key].length }}</i>
       </button>
     </div>
+    <div v-if="manualCount" class="start-all">
+      <span>{{ manualCount }} 局等你开始</span>
+      <button class="primary" :disabled="starting" @click="startAll">全部开始处理</button>
+    </div>
+    <div v-if="store.workflow?.paused" class="paused">⏸ {{ store.workflow.paused }}</div>
     <div class="list">
       <button v-for="r in shown" :key="r.id" class="game" :class="{ on: store.selectedRecordId === r.id }"
               @click="store.selectedRecordId = r.id">
@@ -57,6 +69,9 @@ function day(r) {
 .tabs button { padding: 5px 9px; font-size: 12px; background: transparent; border-color: transparent; color: var(--muted); border-radius: 6px; }
 .tabs button.on { color: var(--text); background: var(--panel-2); border-color: var(--border); }
 .tabs i { font-style: normal; margin-left: 5px; font-size: 10px; color: var(--accent); }
+.start-all { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--accent); }
+.start-all button { padding: 5px 10px; font-size: 12px; }
+.paused { padding: 7px 10px; font-size: 11px; line-height: 1.6; color: var(--accent); background: #f5a6230d; border-bottom: 1px solid var(--border); }
 .list { overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
 .game { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 10px; text-align: left; padding: 9px 10px; background: transparent; border: 1px solid transparent; border-radius: 8px; position: relative; }
 .game:hover:not(:disabled) { background: var(--panel-2); border-color: transparent; }

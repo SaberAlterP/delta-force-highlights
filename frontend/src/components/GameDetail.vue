@@ -103,6 +103,7 @@ function removeBundle() {
         </div>
         <div class="head-actions">
           <button v-if="result?.bundle" class="ghost" @click="act(() => api.workflowOpenFolder(record.id))">打开文件夹</button>
+          <button v-if="record.status === 'manual'" class="primary" :disabled="busy" @click="act(() => api.workflowStart([record.id]), '已开始处理')">开始处理</button>
           <button v-if="record.status === 'historical'" class="primary" :disabled="busy" @click="act(() => api.workflowRetry(record.id), '已加入处理队列，原片保留')">处理这局</button>
           <button v-if="['error', 'review', 'no_highlights', 'ready'].includes(record.status)" class="ghost" :disabled="busy" @click="act(() => api.workflowRetry(record.id), '已重新加入队列')">重新识别</button>
         </div>
@@ -112,7 +113,8 @@ function removeBundle() {
         <div class="progress"><i :style="{ width: `${active.progress * 100}%` }"></i></div>
         <span>{{ active.message }}</span>
       </div>
-      <p v-else-if="record.status === 'waiting'" class="notice">排队中，前面的录像处理完就轮到它。</p>
+      <p v-else-if="record.status === 'waiting'" class="notice">{{ store.workflow.paused ? `排队中 · ${store.workflow.paused}` : '排队中，前面的录像处理完就轮到它。' }}</p>
+      <p v-else-if="record.status === 'manual'" class="notice">当前设置为「只在我点开始时处理」，点右上角「开始处理」识别并剪辑这一局。</p>
       <p v-if="record.error && record.status !== 'waiting'" class="notice" :class="{ bad: record.status === 'error' }">{{ record.error }}</p>
       <p v-if="result?.official_events?.warnings?.length" class="notice">{{ result.official_events.warnings.join('；') }}</p>
 

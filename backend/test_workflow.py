@@ -79,6 +79,50 @@ class WorkflowTests(TestCase):
         self.assertEqual(next(r for r in self.service.status()['records'] if r['id']==row['id'])['status'],'no_highlights')
         self.assertEqual(list(self.out.iterdir()),[])
 
+    def status_of(self,row):
+        return next(r for r in self.service.status()['records'] if r['id']==row['id'])
+
+    def test_manual_mode_registers_new_recording_until_user_starts_it(self):
+        self.service.configure(dict(process_mode='manual'))
+        path,row=self.new_file()
+        self.assertEqual(row['status'],'manual')
+        self.assertTrue(self.service._may_process())
+        self.assertEqual(self.service.start_now(),1)
+        row=self.status_of(row)
+        self.assertEqual(row['status'],'waiting')
+        self.assertEqual(row['allow_cleanup'],1)  # 手动开始的新录像与自动处理一样遵守保留期
+
+    def test_idle_mode_waits_while_game_runs_and_after_it_closes(self):
+        self.service.configure(dict(process_mode='idle',idle_wait_minutes=3))
+        with patch.object(self.service,'game_reason',return_value='检测到 deltaforceclient-win64-shipping.exe 正在运行'):
+            self.assertFalse(self.service._may_process(now=1000))
+            self.assertIn('玩完再处理',self.service.paused)
+        with patch.object(self.service,'game_reason',return_value=''):
+            self.assertFalse(self.service._may_process(now=1000+60))
+            self.assertIn('分钟后开始处理',self.service.paused)
+            self.assertTrue(self.service._may_process(now=1000+181))
+            self.assertEqual(self.service.paused,'')
+        self.service.configure(dict(process_mode='auto'))
+        with patch.object(self.service,'game_reason',return_value='检测到游戏'):
+            self.assertTrue(self.service._may_process(now=2000))
+
+    def test_game_starting_mid_analysis_requeues_recording(self):
+        from concurrent.futures import CancelledError
+        self.service.configure(dict(process_mode='idle'))
+        path,row=self.new_file()
+        def analyze(*_args,**_kw):
+            with patch.object(self.service,'game_reason',return_value='检测到游戏'):
+                self.assertTrue(self.service._should_yield())
+            raise CancelledError()
+        with (patch('app.services.workflow._closed_by_recorder',return_value=True),
+              patch('app.services.workflow.video.probe',return_value=dict(duration=100,width=100,height=100)),
+              patch.object(self.service,'_analyze_source',side_effect=analyze)):
+            self.service.process_next(now=500)
+        row=self.status_of(row)
+        self.assertEqual(row['status'],'waiting')
+        self.assertIn('玩完后自动重新开始',row['error'])
+        self.assertTrue(path.exists())
+
     def test_failed_analysis_keeps_original(self):
         path,row=self.new_file()
         with (patch('app.services.workflow._closed_by_recorder',return_value=True),

@@ -87,6 +87,15 @@ def workflow_pick_folder(values: dict):
     return {'path': str(Path(path)) if path else ''}
 
 
+@router.post('/workflow/start')
+def workflow_start(values: dict):
+    """手动开始处理：ids 为空时开始全部「等你开始」的录像。"""
+    ids = values.get('ids')
+    if ids is not None and not (isinstance(ids, list) and all(isinstance(i, str) for i in ids)):
+        raise HTTPException(422, 'ids 必须是录像编号列表')
+    return {'queued': workflow.start_now(ids)}
+
+
 @router.post('/workflow/retry/{record_id}')
 def workflow_retry(record_id: str):
     try:

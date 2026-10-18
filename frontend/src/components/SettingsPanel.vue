@@ -10,9 +10,15 @@ const saving = ref(false)
 const error = ref('')
 const notice = ref('')
 
+const MODES = [
+  { value: 'idle', title: '打完游戏再处理（推荐）', desc: '检测到正在玩游戏就暂停；识别途中开始玩，会中断并在玩完后重新开始，不抢显卡。' },
+  { value: 'auto', title: '录完马上处理', desc: '不管在不在玩，新录像写完就开始识别。' },
+  { value: 'manual', title: '只在我点开始时处理', desc: '新录像只登记到列表，在网页里点「开始处理」或「全部开始处理」。' },
+]
 const KEYS = ['enabled', 'player_id', 'watch_root', 'output_root', 'window_seconds', 'min_operators', 'pre_seconds',
   'post_seconds', 'retention_days', 'delete_after_retention', 'stretch_169', 'use_gpu', 'prefer_official_events',
-  'wegame_db_dir', 'notify_on_complete', 'auto_clean_cache']
+  'wegame_db_dir', 'notify_on_complete', 'auto_clean_cache', 'process_mode', 'pause_on_fullscreen',
+  'extra_game_processes', 'idle_wait_minutes']
 
 function load() {
   const s = store.workflow?.settings
@@ -87,6 +93,27 @@ async function cleanCache() {
     </section>
 
     <section>
+      <h3>什么时候处理新录像</h3>
+      <div class="modes" role="radiogroup">
+        <label v-for="m in MODES" :key="m.value" class="mode" :class="{ on: draft.process_mode === m.value }">
+          <input type="radio" :value="m.value" v-model="draft.process_mode" />
+          <span><b>{{ m.title }}</b><em>{{ m.desc }}</em></span>
+        </label>
+      </div>
+      <template v-if="draft.process_mode === 'idle'">
+        <label class="field inline"><span>游戏关掉后再等</span><input type="number" min="0" max="120" v-model.number="draft.idle_wait_minutes" /><span>分钟</span></label>
+        <label class="check"><input type="checkbox" v-model="draft.pause_on_fullscreen" />
+          <span>任何全屏程序都算在玩<em>（不在名单里的游戏也能识别；浏览器、播放器全屏看视频不算）</em></span></label>
+        <label class="field">
+          <span>额外的游戏进程名</span>
+          <input v-model.trim="draft.extra_game_processes" placeholder="例如 MyGame.exe, OtherGame.exe" />
+          <em>已内置三角洲行动和常见游戏。窗口化玩的游戏如果没被识别，在任务管理器「详细信息」里找到它的进程名填进来。</em>
+        </label>
+        <p v-if="store.workflow?.paused" class="hint now">现在：{{ store.workflow.paused }}</p>
+      </template>
+    </section>
+
+    <section>
       <h3>集锦规则</h3>
       <div class="grid">
         <label class="field"><span>时间窗（秒）</span><input type="number" min="1" max="600" v-model.number="draft.window_seconds" /></label>
@@ -148,6 +175,13 @@ h3 { margin: 0; font-size: 14px; } h3 small { font-weight: 400; color: var(--acc
 .check em { display: block; }
 em b { font-weight: 400; margin-right: 10px; } .ok { color: var(--ok); } .bad { color: var(--danger); }
 .pick { display: flex; gap: 6px; } .pick input { flex: 1; min-width: 0; } .pick button { flex: none; padding: 7px 12px; }
+.modes { display: flex; flex-direction: column; gap: 6px; }
+.mode { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; }
+.mode.on { border-color: var(--accent); background: #f5a6230a; }
+.mode input { margin-top: 3px; accent-color: var(--accent); }
+.mode b { display: block; font-size: 13px; font-weight: 600; } .mode em { font-style: normal; font-size: 11px; color: var(--muted); line-height: 1.6; }
+.field.inline span:last-child { color: var(--muted); }
+.now { color: var(--accent); }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; } .grid input { width: 100%; }
 .check { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; line-height: 1.5; cursor: pointer; }
 .check input { margin-top: 3px; accent-color: var(--accent); }

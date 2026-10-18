@@ -13,6 +13,7 @@ export function killCount(r) {
 
 const STATUS = {
   historical: ['未处理的旧录像', ''],
+  manual: ['等你开始处理', 'warn'],
   waiting: ['排队中', 'warn'],
   processing: ['正在识别…', 'warn'],
   ready: ['有集锦', 'ok'],
