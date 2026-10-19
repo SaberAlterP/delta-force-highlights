@@ -183,6 +183,22 @@ def workflow_delete_original(record_id: str):
     except (ValueError,OSError) as exc:raise HTTPException(422,str(exc))
 
 
+@router.post('/workflow/{record_id}/delete-highlight/{index}')
+def workflow_delete_highlight(record_id: str, index: int):
+    try:
+        workflow.delete_highlight(record_id, index)
+        return {'ok': True}
+    except (ValueError, OSError) as exc:raise HTTPException(422, str(exc))
+
+
+@router.post('/workflow/{record_id}/delete-manual/{export_id}/{name}')
+def workflow_delete_manual(record_id: str, export_id: str, name: str):
+    try:
+        workflow.delete_manual_export(record_id, export_id, name)
+        return {'ok': True}
+    except (ValueError, OSError) as exc:raise HTTPException(422, str(exc))
+
+
 @router.post('/workflow/{record_id}/delete-bundle')
 def workflow_delete_bundle(record_id: str):
     try:

@@ -7,12 +7,14 @@ import VideoPlayer from './VideoPlayer.vue'
 import ClipTimeline from './ClipTimeline.vue'
 import KillList from './KillList.vue'
 import ExportPanel from './ExportPanel.vue'
+import LoadingVeil from './LoadingVeil.vue'
 
 const store = useStore()
 const busy = ref(false)
 const message = ref('')
 const error = ref('')
 const manualPlay = ref(null)
+const manualLoading = ref(true)
 
 const record = computed(() => store.workflow?.records.find(r => r.id === store.selectedRecordId) || null)
 const result = computed(() => record.value?.result || null)
@@ -48,6 +50,7 @@ async function open(source) {
 }
 
 // 选中一局时自动载入：有高光先看高光 1，否则整局
+watch(() => record.value?.id, () => { message.value = ''; error.value = ''; manualPlay.value = null })
 watch(() => [record.value?.id, sources.value.length], ([id]) => {
   if (!id || editingThis.value || !sources.value.length) return
   open(sources.value.find(s => s.index === 0) || sources.value[0])
@@ -69,6 +72,31 @@ async function release(originalOnly) {
 function removeOriginal() {
   if (!confirm(`删除这局的整局原录像？\n\n高光、手动剪辑和识别记录都会保留。\n原片删除后无法恢复。`)) return
   act(async () => { await release(true); await api.workflowDeleteOriginal(record.value.id) }, '整局原片已删除')
+}
+// 删除一段自动高光或手动剪辑：先停掉正在播放的它，再删文件
+function removeHighlight(s) {
+  if (!confirm(`删除「${s.label}」这个视频文件？
+
+只删这一段，整局原片和其他片段不受影响，删除后无法恢复。`)) return
+  act(async () => {
+    if (store.video?.upload_id === s.key) { store.video = null; store.kills = []; store.segments = [] }
+    await new Promise(r => setTimeout(r, 300))
+    await api.workflowDeleteHighlight(record.value.id, s.index)
+  }, `${s.label} 已删除`)
+}
+function removeManual(job, f) {
+  if (!confirm(`删除手动剪辑「${f.name}」？
+
+删除后无法恢复。`)) return
+  act(async () => {
+    if (manualPlay.value?.name === f.name) manualPlay.value = null
+    await new Promise(r => setTimeout(r, 300))
+    await api.workflowDeleteManual(record.value.id, job.id, f.name)
+  }, `${f.name} 已删除`)
+}
+function playManual(job, f) {
+  manualLoading.value = true
+  manualPlay.value = { name: f.name, src: api.workflowManualFileUrl(record.value.id, job.id, f.name) }
 }
 function removeBundle() {
   if (!confirm(`删除这一局的整个集锦文件夹？\n\n${result.value.bundle.path}\n\n里面的整局原片、全部高光、手动剪辑和识别记录都会删除，无法恢复。`)) return
@@ -119,11 +147,15 @@ function removeBundle() {
       <p v-if="result?.official_events?.warnings?.length" class="notice">{{ result.official_events.warnings.join('；') }}</p>
 
       <div v-if="sources.length" class="sources" role="tablist">
-        <button v-for="s in sources" :key="s.key" role="tab" :aria-selected="store.video?.upload_id === s.key"
-                :class="{ on: store.video?.upload_id === s.key && !manualPlay }" @click="open(s)">{{ s.label }}</button>
+        <span v-for="s in sources" :key="s.key" class="chip" :class="{ on: store.video?.upload_id === s.key && !manualPlay }">
+          <button role="tab" :aria-selected="store.video?.upload_id === s.key" @click="open(s)">{{ s.label }}</button>
+          <button v-if="s.index !== null && idle" class="x" :disabled="busy" :title="`删除${s.label}`" :aria-label="`删除${s.label}`" @click="removeHighlight(s)">✕</button>
+        </span>
         <template v-for="job in record.manual_exports || []" :key="job.id">
-          <button v-for="f in job.files" :key="f.path" :class="{ on: manualPlay?.name === f.name }"
-                  :title="'手动剪辑：' + f.name" @click="manualPlay = { name: f.name, src: api.workflowManualFileUrl(record.id, job.id, f.name) }">✂ {{ f.name }}</button>
+          <span v-for="f in job.files" :key="f.path" class="chip" :class="{ on: manualPlay?.name === f.name }">
+            <button :title="'手动剪辑：' + f.name" @click="playManual(job, f)">✂ {{ f.name }}</button>
+            <button class="x" :disabled="busy" :title="`删除 ${f.name}`" :aria-label="`删除 ${f.name}`" @click="removeManual(job, f)">✕</button>
+          </span>
         </template>
       </div>
     </template>
@@ -140,8 +172,14 @@ function removeBundle() {
 
     <!-- 播放 / 剪辑 -->
     <div v-if="manualPlay" class="manual-play">
-      <video :key="manualPlay.src" :src="manualPlay.src" controls autoplay></video>
+      <div class="manual-wrap">
+        <video :key="manualPlay.src" :src="manualPlay.src" controls autoplay
+               @loadstart="manualLoading = true" @waiting="manualLoading = true" @canplay="manualLoading = false"
+               @playing="manualLoading = false" @error="manualLoading = false"></video>
+        <LoadingVeil :show="manualLoading" />
+      </div>
     </div>
+    <div v-else-if="store.sourceLoading && !editingThis" class="opening"><LoadingVeil show label="正在打开素材…" /></div>
     <template v-else-if="store.video && (editingThis || (!record && manualVideo))">
       <p v-if="store.projectSaveError" class="notice bad">{{ store.projectSaveError }}</p>
       <VideoPlayer />
@@ -186,11 +224,18 @@ h1 { margin: 4px 0 6px; font-size: 24px; font-weight: 600; letter-spacing: .5px;
 .notice.live { display: flex; align-items: center; gap: 12px; }
 .notice.live .progress { flex: 0 0 160px; }
 .sources { display: flex; gap: 6px; flex-wrap: wrap; }
-.sources button { font-size: 12px; padding: 6px 12px; border-radius: 999px; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sources button.on { background: var(--accent); border-color: var(--accent); color: #1a1205; font-weight: 600; }
+.chip { display: inline-flex; align-items: stretch; border: 1px solid var(--border); border-radius: 999px; background: var(--panel-2); overflow: hidden; }
+.chip button { font-size: 12px; padding: 6px 12px; border: 0; border-radius: 0; background: transparent; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip .x { padding: 6px 9px 6px 6px; color: var(--muted); font-size: 11px; }
+.chip .x:hover:not(:disabled) { color: var(--danger); background: #2a1718; }
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent); border-color: var(--accent); }
+.chip.on button { color: #1a1205; font-weight: 600; } .chip.on .x { color: #6b4708; }
+.manual-wrap { position: relative; width: min(100%, calc(65vh * 16 / 9)); margin: 0 auto; }
+.opening { position: relative; width: min(100%, calc(65vh * 16 / 9)); aspect-ratio: 16 / 9; margin: 0 auto; background: #000; border-radius: 8px; overflow: hidden; }
 .welcome { padding: 60px 24px; text-align: center; background: var(--panel); border: 1px dashed var(--border); border-radius: var(--radius); }
 .welcome h1 { font-size: 20px; } .welcome p { color: var(--muted); font-size: 13px; line-height: 1.9; max-width: 460px; margin: 10px auto 18px; }
-.manual-play video { display: block; width: min(100%, calc(65vh * 16 / 9)); margin: 0 auto; background: #000; border-radius: 8px; }
+.manual-play video { display: block; width: 100%; background: #000; border-radius: 8px; }
 .work { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(300px, 1fr); gap: 12px; align-items: start; }
 .foot { font-size: 11px; margin: 0; }
 .keep { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; }

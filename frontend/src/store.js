@@ -58,6 +58,7 @@ export const useStore = defineStore('main', {
     workflowError: '',
     selectedRecordId: null,
     panel: '',            // '' | 'settings' | 'guide' | 'manual'
+    sourceLoading: false, // 正在向后台请求要打开的素材
   }),
 
   getters: {
@@ -142,7 +143,9 @@ export const useStore = defineStore('main', {
     },
 
     async openArchiveVideo(recordId, clipIndex = null) {
-      const data = await api.workflowEdit(recordId, clipIndex)
+      this.sourceLoading = true
+      let data
+      try { data = await api.workflowEdit(recordId, clipIndex) } finally { this.sourceLoading = false }
       this.video = data.video
       this.currentTime = 0
       this.analyze = { jobId: null, state: 'idle', progress: 0, message: '', error: '' }

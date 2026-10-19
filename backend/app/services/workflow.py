@@ -725,7 +725,7 @@ class WorkflowService:
                 raise RuntimeError('归档原片已经改变，取消清理')
             result=json.loads(row['result'])
             if (not result.get('completed_at')
-                    or (result['summary']['has_highlights'] and not result['files'])):
+                    or (result['summary']['has_highlights'] and not result['files'] and not result.get('user_removed_clips'))):
                 raise RuntimeError('识别或导出未完整完成，保留原片')
             for item in result['files']:
                 out=Path(item['path'])
@@ -801,6 +801,53 @@ class WorkflowService:
             result['cleanup_after']=None
             self._update(row['id'],status='deleted',result=json.dumps(result,ensure_ascii=False),error=None)
         self._write_bundle(row,result,'deleted')
+
+    @staticmethod
+    def _inside(path,directory):
+        # 只允许删集锦包里的成片，绝不碰整局原片或包外文件
+        return (not path.is_symlink() and path.name!='整局原录像.mp4' and path.suffix.lower()=='.mp4'
+                and path.resolve().is_relative_to(directory.resolve()) and path.resolve()!=directory.resolve())
+
+    def delete_highlight(self,record_id,index):
+        with self._lock:
+            row,directory=self._owned_bundle(record_id)
+            result=row['result'] or {}
+            files=result.get('files',[])
+            if not isinstance(index,int) or not 0<=index<len(files):raise ValueError('这段高光不存在')
+            item=files[index]
+            path=Path(item['path'])
+            if not self._inside(path,directory):raise ValueError('高光文件不在这局的集锦文件夹里，取消删除')
+            if path.exists():self._retry_locked(path.unlink)
+            files.pop(index)
+            result['exports']=[e for e in result.get('exports',[]) if e.get('path')!=item['path']]
+            # 用户删过高光：之后即使一段不剩，也不当作「导出未完成」而暂停原片清理
+            result['user_removed_clips']=result.get('user_removed_clips',0)+1
+            self._update(row['id'],result=json.dumps(result,ensure_ascii=False))
+            project=projects.load(row)
+            project['sources'].pop(f'bundle_{row["id"]}_clip_{item.get("sha256","")[:12]}',None)
+            projects.save(row,project)
+        self._write_bundle(row,result,row['status'])
+
+    def delete_manual_export(self,record_id,export_id,name):
+        with self._lock:
+            row,directory=self._owned_bundle(record_id)
+            project=projects.load(row)
+            entry=next((e for e in project.get('manual_exports',[]) if e['id']==export_id),None)
+            item=next((f for f in entry['files'] if f['name']==name),None) if entry else None
+            if not item:raise ValueError('这个手动剪辑不存在')
+            path=directory/item['path']
+            if not self._inside(path,directory):raise ValueError('文件不在这局的集锦文件夹里，取消删除')
+            if path.exists():self._retry_locked(path.unlink)
+            entry['files'].remove(item)
+            if not entry['files']:
+                project['manual_exports'].remove(entry)
+                parent=path.parent
+                # 清掉空的导出目录（只删空目录）
+                while parent.resolve()!=directory.resolve() and parent.resolve().is_relative_to(directory.resolve()):
+                    try:parent.rmdir()
+                    except OSError:break
+                    parent=parent.parent
+            projects.save(row,project)
 
     def delete_bundle(self,record_id):
         with self._lock:

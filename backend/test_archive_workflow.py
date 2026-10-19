@@ -264,6 +264,38 @@ class ArchiveWorkflowTests(TestCase):
         self.assertEqual(self.service.discover(now=time.time()),0)
         with self.assertRaises(ValueError):self.service.retry(row['id'])
 
+    def test_delete_highlight_keeps_original_and_cleanup_still_runs(self):
+        row,_=self.run_job()
+        directory=Path(row['archive_dir'])
+        clip=Path(row['result']['files'][0]['path'])
+        self.service.delete_highlight(row['id'],0)
+        row=self.current()
+        self.assertFalse(clip.exists())
+        self.assertEqual(row['result']['files'],[])
+        self.assertTrue((directory/'整局原录像.mp4').exists())
+        with self.assertRaises(ValueError):self.service.delete_highlight(row['id'],0)
+        # 删光高光后，到期仍按保留期清理原片，而不是卡在「待复核」
+        with (patch('app.services.workflow._closed_by_recorder',return_value=True),
+              patch.object(self.service,'verify_clip')):
+            self.service.cleanup_due(now=row['cleanup_after']+1)
+        self.assertEqual(self.current()['status'],'deleted')
+
+    def test_delete_manual_export_removes_file_entry_and_empty_folder(self):
+        from app.services import projects
+        row,_=self.run_job()
+        directory=Path(row['archive_dir'])
+        folder=directory/'手动剪辑'/'job1';folder.mkdir(parents=True)
+        (folder/'a.mp4').write_bytes(b'a')
+        project=projects.load(row)
+        project['manual_exports'].append(dict(id='job1',files=[dict(name='a.mp4',path='手动剪辑/job1/a.mp4'),
+            dict(name='evil.mp4',path='整局原录像.mp4')]))
+        projects.save(row,project)
+        with self.assertRaises(ValueError):self.service.delete_manual_export(row['id'],'job1','evil.mp4')
+        self.assertTrue((directory/'整局原录像.mp4').exists())
+        self.service.delete_manual_export(row['id'],'job1','a.mp4')
+        self.assertFalse((folder/'a.mp4').exists())
+        self.assertEqual([f['name'] for f in projects.load(row)['manual_exports'][0]['files']],['evil.mp4'])
+
     def test_manual_delete_refuses_mismatched_bundle_identity(self):
         row,_=self.run_job()
         directory=Path(row['archive_dir'])

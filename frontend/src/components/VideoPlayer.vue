@@ -5,6 +5,7 @@ import 'video.js/dist/video-js.css'
 import { useStore } from '../store'
 import { api } from '../api'
 import { fmtTime } from '../util'
+import LoadingVeil from './LoadingVeil.vue'
 
 const store = useStore()
 const videoEl = ref(null)
@@ -12,6 +13,18 @@ const playerRoot = ref(null)
 let player = null
 const currentTime = ref(0)
 const DEFAULT_VOLUME = 0.2
+
+// 缓冲动画：超过 200ms 还没出画面才显示，避免一闪而过
+const buffering = ref(true)
+const veil = ref(true)
+let veilTimer = null
+function setBuffering(value) {
+  buffering.value = value
+  clearTimeout(veilTimer)
+  if (value) veilTimer = setTimeout(() => { veil.value = buffering.value }, 200)
+  else veil.value = false
+}
+const veilLabel = computed(() => store.sourceLoading ? '正在打开素材…' : currentTime.value > 0.5 ? '正在缓冲…' : '正在加载画面…')
 
 const duration = computed(() => store.video?.duration || 0)
 const isFourThree = computed(() => {
@@ -35,9 +48,11 @@ onMounted(() => {
     store.currentTime = currentTime.value
   })
   player.on('loadedmetadata', renderMarkers)
+  for (const name of ['loadstart', 'waiting', 'seeking']) player.on(name, () => setBuffering(true))
+  for (const name of ['canplay', 'playing', 'seeked', 'loadeddata', 'error']) player.on(name, () => setBuffering(false))
 })
 
-onBeforeUnmount(() => { if (player) player.dispose() })
+onBeforeUnmount(() => { clearTimeout(veilTimer); if (player) player.dispose() })
 
 function renderMarkers() {
   if (!player) return
@@ -99,8 +114,9 @@ function boxStyle(region) {
 <template>
   <div class="panel player-panel">
     <!-- video.js 接管 <video> 后会改它的 class；动态 class 只能放在外层，否则会冲掉 vjs-tech 导致画面掉出播放框 -->
-    <div ref="playerRoot" class="player-wrap" :class="{ 'is-stretched': stretchPreview }">
+    <div ref="playerRoot" class="player-wrap" :class="{ 'is-stretched': stretchPreview, 'is-loading': veil || store.sourceLoading }">
       <video ref="videoEl" class="video-js vjs-big-play-centered"></video>
+      <LoadingVeil class="player-veil" :show="veil || store.sourceLoading" :label="veilLabel" />
 
       <div v-if="store.showRegions" class="region-overlay">
         <div class="rbox id" :style="boxStyle(store.regions.id_region)">
@@ -125,6 +141,9 @@ function boxStyle(region) {
 .player-panel { padding: 9px 12px 8px; scroll-margin-top: 8px; }
 /* 按视口高度定宽：播放器约占 65% 屏高，下方时间轴仍在同一屏内 */
 .player-wrap, .controls { width: min(100%, calc(65vh * 16 / 9)); margin-inline: auto; }
+:deep(.vjs-loading-spinner) { display: none !important; }
+.player-veil { bottom: 30px; border-radius: 8px 8px 0 0; }
+.player-wrap.is-loading :deep(.vjs-big-play-button) { opacity: 0; }
 .player-wrap { position: relative; box-shadow: 0 10px 28px rgba(0, 0, 0, .28); }
 .video-js { width: 100%; border-radius: 8px; overflow: hidden; }
 .player-wrap.is-stretched :deep(.vjs-tech) { object-fit: fill !important; }
