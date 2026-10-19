@@ -27,6 +27,8 @@ export const api = {
   getConfig: () => http.get('/config').then(r => r.data),
   workflowStatus: () => http.get('/workflow').then(r => r.data),
   workflowSettings: (values) => http.post('/workflow/settings', values).then(r => r.data),
+  autostartStatus: () => http.get('/workflow/autostart').then(r => r.data),
+  setAutostart: (enabled) => http.post('/workflow/autostart', { enabled }).then(r => r.data),
   workflowStart: (ids = null) => http.post('/workflow/start', { ids }).then(r => r.data),
   workflowRetry: (id) => http.post(`/workflow/retry/${id}`).then(r => r.data),
   workflowFileUrl: (id, index) => `/api/workflow/${id}/file/${index}`,

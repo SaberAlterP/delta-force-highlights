@@ -22,6 +22,15 @@ app.add_middleware(
 app.include_router(router)
 
 
+@app.middleware("http")
+async def no_cache_html(request, call_next):
+    # 首页每次都向后端确认，更新后不用 Ctrl+F5；带哈希的 js/css 照常缓存
+    response = await call_next(request)
+    if response.headers.get("content-type", "").startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}

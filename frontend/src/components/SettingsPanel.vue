@@ -6,6 +6,8 @@ import { useStore } from '../store'
 const store = useStore()
 const draft = ref(null)
 const env = ref(null)
+const autostart = ref(null)
+const autoBusy = ref(false)
 const saving = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -27,7 +29,19 @@ function load() {
 async function loadEnv() {
   try { env.value = await api.workflowEnvironment() } catch { env.value = null }
 }
-onMounted(async () => { if (!store.workflow) await store.refreshWorkflow(); load(); loadEnv() })
+async function loadAutostart() {
+  try { autostart.value = await api.autostartStatus() } catch { autostart.value = null }
+}
+// 开机自启直接改系统的启动文件夹，点了立即生效，不经过「保存设置」
+async function toggleAutostart(enabled) {
+  autoBusy.value = true; error.value = ''
+  try {
+    autostart.value = await api.setAutostart(enabled)
+    notice.value = enabled ? '已开启：以后登录 Windows 会在后台自动启动' : '已关闭开机自动启动'
+  } catch (e) { error.value = e?.response?.data?.detail || '修改开机启动失败' }
+  finally { autoBusy.value = false }
+}
+onMounted(async () => { if (!store.workflow) await store.refreshWorkflow(); load(); loadEnv(); loadAutostart() })
 
 const dirty = computed(() => draft.value && store.workflow && KEYS.some(k => draft.value[k] !== store.workflow.settings[k]))
 const missing = computed(() => draft.value ? [
@@ -90,6 +104,8 @@ async function cleanCache() {
       </label>
       <label class="check"><input type="checkbox" v-model="draft.enabled" :disabled="missing.length > 0" />
         <span>自动监控新录像<em v-if="missing.length">（先填好：{{ missing.join('、') }}）</em></span></label>
+      <label v-if="autostart?.supported" class="check"><input type="checkbox" :checked="autostart.enabled" :disabled="autoBusy" @change="toggleAutostart($event.target.checked)" />
+        <span>开机自动启动<em>登录 Windows 后在后台静默运行（不弹窗口、不开浏览器，待机约 50MB 内存）。点了立即生效。</em></span></label>
     </section>
 
     <section>

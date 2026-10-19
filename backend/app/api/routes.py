@@ -87,6 +87,24 @@ def workflow_pick_folder(values: dict):
     return {'path': str(Path(path)) if path else ''}
 
 
+@router.get('/workflow/autostart')
+def workflow_autostart_status():
+    from ..services import autostart
+    try:
+        return autostart.status()
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        raise HTTPException(422, f'无法读取开机启动状态：{exc}')
+
+
+@router.post('/workflow/autostart')
+def workflow_autostart_set(values: dict):
+    from ..services import autostart
+    try:
+        return autostart.set_enabled(bool(values.get('enabled')))
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        raise HTTPException(422, f'无法修改开机启动：{exc}')
+
+
 @router.post('/workflow/start')
 def workflow_start(values: dict):
     """手动开始处理：ids 为空时开始全部「等你开始」的录像。"""
