@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useStore } from './store'
 import GameList from './components/GameList.vue'
 import GameDetail from './components/GameDetail.vue'
@@ -14,6 +14,11 @@ const settings = computed(() => store.workflow?.settings)
 const ready = computed(() => settings.value && settings.value.player_id && settings.value.watch_root && settings.value.output_root)
 const queued = computed(() => (store.workflow?.records || []).filter(r => ['waiting', 'processing'].includes(r.status)).length)
 const titles = { settings: '设置', guide: '使用指南', manual: '手动识别录像' }
+
+// 对局列表收起后把宽度让给剪辑区；记住上次的选择
+const LS_SIDEBAR = 'sidebar_collapsed'
+const sidebarCollapsed = ref(localStorage.getItem(LS_SIDEBAR) === '1')
+watch(sidebarCollapsed, v => localStorage.setItem(LS_SIDEBAR, v ? '1' : '0'))
 
 function onKey(e) { if (e.key === 'Escape') store.panel = '' }
 onMounted(async () => {
@@ -55,8 +60,8 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
     <p v-if="store.workflowError" class="offline" role="alert">{{ store.workflowError }}</p>
     <p v-else-if="store.workflow?.error" class="offline" role="alert">后台提示：{{ store.workflow.error }}</p>
 
-    <main class="layout">
-      <GameList />
+    <main class="layout" :class="{ narrow: sidebarCollapsed }">
+      <GameList v-model:collapsed="sidebarCollapsed" />
       <GameDetail />
     </main>
 
@@ -95,6 +100,7 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
 nav { display: flex; gap: 6px; } nav button { font-size: 13px; padding: 7px 14px; }
 .offline { margin: 10px 18px 0; padding: 8px 12px; font-size: 12px; color: #f0a6a8; background: #2a1718; border: 1px solid #46282b; border-radius: 6px; }
 .layout { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: start; }
+.layout.narrow { grid-template-columns: 64px minmax(0, 1fr); }
 .layout > :first-child { position: sticky; top: 70px; max-height: calc(100vh - 86px); }
 .scrim { position: fixed; inset: 0; z-index: 50; background: #05080cb3; display: flex; justify-content: flex-end; }
 .drawer { width: min(520px, 100vw); height: 100%; background: var(--panel); border-left: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: -20px 0 40px #0006; }
@@ -110,7 +116,7 @@ nav { display: flex; gap: 6px; } nav button { font-size: 13px; padding: 7px 14px
 .drawer-enter-from, .drawer-leave-to { opacity: 0; }
 .drawer-enter-from .drawer, .drawer-leave-to .drawer { transform: translateX(40px); }
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout, .layout.narrow { grid-template-columns: 1fr; }
   .layout > :first-child { position: static; max-height: 360px; }
   .brand small { display: none; }
 }

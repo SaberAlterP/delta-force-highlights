@@ -55,3 +55,21 @@ class ExporterStretchTests(TestCase):
 if __name__ == "__main__":
     import unittest
     unittest.main()
+
+
+class ExporterFlatOutputTests(TestCase):
+    def test_flat_export_writes_next_to_highlights_without_overwriting(self):
+        def fake_cut(src, start, end, out, **_kwargs):
+            Path(out).write_bytes(b"clip")
+        with TemporaryDirectory() as tmp, patch.object(exporter, "cut_clip", side_effect=fake_cut),              patch.object(exporter, "merge_clips", side_effect=lambda files, out, **_k: Path(out).write_bytes(b"m")):
+            root = Path(tmp)
+            (root / "整局原录像.mp4").write_bytes(b"orig")
+            spec = dict(src="s.mp4", label="片段01", start=1, end=4)
+            first = exporter.export_clips([spec], merge=False, accurate=False, output_root=root, flat=True)
+            second = exporter.export_clips([spec], merge=True, accurate=False, output_root=root, flat=True)
+            self.assertEqual(Path(first["files"][0]["path"]).parent, root)
+            self.assertEqual(first["files"][0]["name"], "手动_片段01_1.000-4.000s.mp4")
+            self.assertNotEqual(first["files"][0]["path"], second["files"][0]["path"])
+            self.assertTrue(Path(second["merged"]).name.startswith("手动合集_"))
+            self.assertEqual((root / "整局原录像.mp4").read_bytes(), b"orig")
+            self.assertFalse(list(root.glob(".pending_*")))

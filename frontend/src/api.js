@@ -43,6 +43,7 @@ export const api = {
   workflowDeleteHighlight: (id, index) => http.post(`/workflow/${id}/delete-highlight/${index}`).then(r => r.data),
   workflowDeleteManual: (id, exportId, name) => http.post(`/workflow/${id}/delete-manual/${exportId}/${encodeURIComponent(name)}`).then(r => r.data),
   workflowDeleteBundle: (id) => http.post(`/workflow/${id}/delete-bundle`).then(r => r.data),
+  workflowRemoveMissing: (id) => http.post(`/workflow/${id}/remove-missing`).then(r => r.data),
   workflowEdit:(id, clipIndex = null) => http.post(`/workflow/${id}/edit`, { clip_index: clipIndex }).then(r => r.data),
   workflowSaveProject: (id, sourceId, kills, segments) => http.post(`/workflow/${id}/project`, { source_id: sourceId, kills, segments }).then(r => r.data),
   workflowManualFileUrl: (id, exportId, name) => `/api/workflow/${id}/manual/${exportId}/${encodeURIComponent(name)}`,

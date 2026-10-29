@@ -72,7 +72,9 @@ class ArchiveWorkflowTests(TestCase):
         with patch('app.services.workflow.wegame.index.find',return_value=native):
             row,calls=self.run_job()
         self.assertEqual(calls,1)
-        self.assertIn('全局7杀_有集锦',Path(row['archive_dir']).name)
+        # 官方结算 7 杀含人机；文件夹按干员击杀点命名。
+        self.assertIn('全局2杀_有集锦',Path(row['archive_dir']).name)
+        self.assertEqual(row['result']['summary']['official_kills'],7)
         self.assertEqual(row['result']['summary']['confirmed_kills'],2)
         self.assertEqual(row['result']['summary']['loot_points'],1)
         self.assertEqual(row['result']['highlights'][0]['end'],115)
@@ -296,6 +298,26 @@ class ArchiveWorkflowTests(TestCase):
         self.assertFalse((folder/'a.mp4').exists())
         self.assertEqual([f['name'] for f in projects.load(row)['manual_exports'][0]['files']],['evil.mp4'])
 
+    def test_old_manual_exports_move_to_bundle_root(self):
+        from app.services import projects
+        row,_=self.run_job()
+        directory=Path(row['archive_dir'])
+        folder=directory/'手动剪辑'/'job1';folder.mkdir(parents=True)
+        (folder/'01_片段01.mp4').write_bytes(b'a')
+        project=projects.load(row)
+        project['manual_exports'].append(dict(id='job1',files=[dict(name='01_片段01.mp4',path='手动剪辑/job1/01_片段01.mp4'),
+            dict(name='evil.mp4',path='手动剪辑/../整局原录像.mp4')]))
+        projects.save(row,project)
+        self.assertEqual(self.service.flatten_manual_exports(),1)
+        files=projects.load(row)['manual_exports'][0]['files']
+        self.assertEqual(files[0],dict(name='手动_01_片段01.mp4',path='手动_01_片段01.mp4'))
+        self.assertEqual((directory/'手动_01_片段01.mp4').read_bytes(),b'a')
+        self.assertTrue((directory/'整局原录像.mp4').exists())
+        self.assertFalse((directory/'手动剪辑').exists())
+        # 挪过以后可以照常删除
+        self.service.delete_manual_export(row['id'],'job1','手动_01_片段01.mp4')
+        self.assertFalse((directory/'手动_01_片段01.mp4').exists())
+
     def test_manual_delete_refuses_mismatched_bundle_identity(self):
         row,_=self.run_job()
         directory=Path(row['archive_dir'])
@@ -304,6 +326,52 @@ class ArchiveWorkflowTests(TestCase):
         with self.assertRaises(ValueError):self.service.delete_original(row['id'])
         self.assertTrue((directory/'整局原录像.mp4').exists())
 
+    def protect(self):
+        with patch('app.services.workflow._closed_by_recorder',return_value=True):
+            return self.service.protect(now=time.time()+121)
+
+    def test_recording_deleted_by_recorder_after_protection_is_still_archived(self):
+        self.assertEqual(self.protect(),1)
+        guard=Path(self.current()['guard_path'])
+        self.assertEqual(guard.read_bytes(),b'original-movie')
+        # 精彩时刻关闭窗口时删除整局：只删它自己的文件名，数据仍在保护链接上。
+        self.source.unlink()
+        self.assertTrue(self.current()['original_available'])
+        row,calls=self.run_job()
+        self.assertEqual(calls,1)
+        self.assertEqual((Path(row['archive_dir'])/'整局原录像.mp4').read_bytes(),b'original-movie')
+        self.assertFalse(guard.exists())
+        self.assertIsNone(row['guard_path'])
+        self.assertEqual(self.service.discover(now=time.time()),0)
+
+    def test_protection_link_is_released_when_original_was_kept_by_recorder(self):
+        self.protect()
+        guard=Path(self.current()['guard_path'])
+        row,_=self.run_job()
+        self.assertFalse(self.source.exists())
+        self.assertFalse(guard.exists())
+        self.assertTrue((Path(row['archive_dir'])/'整局原录像.mp4').exists())
+
+    def test_protection_waits_until_recording_is_stable_and_closed(self):
+        with patch('app.services.workflow._closed_by_recorder',return_value=True):
+            self.assertEqual(self.service.protect(now=250),0)
+        with patch('app.services.workflow._closed_by_recorder',return_value=False):
+            self.assertEqual(self.service.protect(now=time.time()+121),0)
+        self.assertIsNone(self.current()['guard_path'])
+
+    def test_unprotected_deleted_recording_explains_recorder_setting(self):
+        self.source.unlink()
+        self.service.process_next(now=time.time()+121)
+        row=self.current()
+        self.assertEqual(row['status'],'missing')
+        self.assertIn('全场回顾',row['error'])
+
+    def test_missing_record_without_bundle_can_be_removed(self):
+        with self.assertRaises(ValueError):self.service.remove_missing(self.current()['id'])
+        self.source.unlink()
+        self.service.process_next(now=time.time()+121)
+        self.service.remove_missing(self.current()['id'])
+        self.assertEqual(self.current()['status'],'removed')
 
 class CrossVolumeMoveTests(TestCase):
     def setUp(self):
@@ -345,3 +413,4 @@ class CrossVolumeMoveTests(TestCase):
             archive.move_verified(self.src,self.dest,archive.fingerprint(self.src),
                                   closed=lambda _:True,commit=lambda *_:None)
         self.assertTrue(self.src.exists());self.assertEqual(self.dest.read_bytes(),b'other-video')
+

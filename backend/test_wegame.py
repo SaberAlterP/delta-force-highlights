@@ -60,6 +60,20 @@ class WeGameTests(TestCase):
         data['marks']=[m for m in data['marks'] if m['event_type']=='loot']
         self.assertEqual(wegame.verification_windows(data,300),[])
 
+    def test_operator_kills_missing_from_highlights_are_supplemented(self):
+        data=wegame.parse_record(fixture(),PATH,'player')
+        self.assertTrue(wegame.needs_full_scan(data))
+        obs=[dict(id='near',time=31,confirmed=True,review_required=False,victim_id='a',event_type='kill'),
+             dict(id='far',time=120,confirmed=True,review_required=False,victim_id='b',event_type='down_or_kill'),
+             dict(id='help',time=200,confirmed=False,review_required=True,victim_id='',event_type='assist')]
+        marks=wegame.supplement_marks(wegame.verified_marks(data,obs),obs)
+        kills=[m for m in marks if m['event_type']=='kill']
+        self.assertEqual([m['time'] for m in kills],[30,30,120])
+        self.assertEqual([m['label'] for m in kills],['击杀1','击杀2','击杀3'])
+        self.assertEqual(kills[2]['source'],'visual')
+        data['official_kills']=data['kill_points']
+        self.assertFalse(wegame.needs_full_scan(data))
+
     def test_unknown_event_is_named_but_not_treated_as_kill(self):
         row=fixture();row['videos'][0]['clips'][0]['events'][0]['id']='999'
         data=wegame.parse_record(row,PATH,'player')

@@ -8,7 +8,8 @@ export function recordedAt(r) {
 
 export function killCount(r) {
   const s = r.result?.summary
-  return s ? (s.official_kills ?? s.confirmed_kills) : null
+  // 官方结算含人机，对局击杀数只算干员击杀点
+  return s ? (s.kill_points ?? s.confirmed_kills) : null
 }
 
 const STATUS = {

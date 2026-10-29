@@ -151,7 +151,7 @@ class WorkflowService:
             columns={r['name'] for r in db.execute('PRAGMA table_info(recordings)')}
             for name,kind in dict(archive_dir='TEXT',archive_root='TEXT',archive_path='TEXT',
                 archive_sha256='TEXT',archive_fingerprint='TEXT',retained_since='REAL',
-                notified='REAL',notification_error='TEXT').items():
+                notified='REAL',notification_error='TEXT',guard_path='TEXT').items():
                 if name not in columns:
                     db.execute(f'ALTER TABLE recordings ADD COLUMN {name} {kind}')
 
@@ -268,8 +268,56 @@ class WorkflowService:
     @staticmethod
     def _source_path(row):
         # 中断可能发生在跨盘复制完成之后；E 仍在时优先完成移除来源的步骤。
+        # 录像软件删掉原路径后，改用录完时建好的保护硬链接。
         path=Path(row['path'])
-        return path if path.exists() or not row['archive_path'] else Path(row['archive_path'])
+        guard=Path(row['guard_path']) if row['guard_path'] else None
+        if path.exists() or not (row['archive_path'] or guard):return path
+        if guard and guard.exists() and not (row['archive_path'] and Path(row['archive_path']).exists()):
+            return guard
+        return Path(row['archive_path']) if row['archive_path'] else guard
+
+    def _guard_dir(self):
+        # 必须与录像同盘才能建硬链接；放在录像目录内，但不会被 _sources 当成新录像。
+        return Path(self.settings.watch_root).resolve()/'.集锦工具原片保护'
+
+    def protect(self, now: float | None = None) -> int:
+        """录像一写完就建硬链接保护。
+
+        精彩时刻关闭「全场回顾」时，整局录像只临时留 3 局，窗口关闭（退游戏）时全部删除；
+        而默认打完游戏才处理，届时原片已没了。硬链接不复制数据、不占额外空间，
+        录像软件删掉它自己的文件名后，数据仍保留在保护链接上，处理归档后再释放。
+        """
+        if not self.settings.watch_root:return 0
+        now=time.time() if now is None else now
+        with self._db() as db:
+            rows=[dict(r) for r in db.execute(
+                "SELECT * FROM recordings WHERE status IN ('waiting','manual') AND guard_path IS NULL "
+                'AND stable_since<=?',(now-self.settings.stable_seconds,))]
+        count=0
+        for row in rows:
+            path=Path(row['path'])
+            try:
+                if (path.is_symlink() or not path.is_file() or _fingerprint(path)!=row['fingerprint']
+                        or not _closed_by_recorder(path)):
+                    continue
+                guard_dir=self._guard_dir();guard_dir.mkdir(exist_ok=True)
+                guard=guard_dir/f'{row["id"]}_{path.name}'
+                if not guard.exists():os.link(path,guard)
+                if _fingerprint(guard)!=row['fingerprint']:
+                    raise RuntimeError('保护链接与原片不一致')
+                self._update(row['id'],guard_path=str(guard))
+                count+=1
+            except Exception as exc:
+                self._update(row['id'],error=f'原片保护失败（退游戏后录像软件可能删除原片）：{exc}')
+        return count
+
+    def _release_guard(self,row):
+        # 原片已归档到集锦包或已删除，保护链接不再需要。
+        guard=Path(row['guard_path']) if row.get('guard_path') else None
+        if guard and guard.exists() and not guard.is_symlink() and guard.parent==self._guard_dir():
+            guard.unlink()
+        if guard:
+            self._update(row['id'],guard_path=None);row['guard_path']=None
 
     def process_next(self, now: float | None = None):
         now = time.time() if now is None else now
@@ -279,8 +327,9 @@ class WorkflowService:
                                         'ORDER BY discovered', (now-self.settings.stable_seconds,)).fetchall():
                 path = self._source_path(candidate)
                 if not path.exists():
-                    db.execute("UPDATE recordings SET status='missing',error='原片已不在原路径' WHERE id=?",
-                               (candidate['id'],))
+                    db.execute("UPDATE recordings SET status='missing',error=? WHERE id=?",
+                               ('原片已不在原路径。精彩时刻没开「全场回顾」时，退游戏会删除整局录像',
+                                candidate['id']))
                     continue
                 expected=(candidate['archive_fingerprint'] if str(path)==candidate['archive_path']
                           else candidate['fingerprint'])
@@ -312,11 +361,17 @@ class WorkflowService:
                     raise ValueError('官方事件与当前录像时长不匹配，保留原片等待复核')
                 analysis_params['official_signature']=native['signature']
                 analysis_params['official_version']=wegame.VERSION
+                if wegame.needs_full_scan(native):analysis_params['kill_scan']='full'
             if previous.get('source')==source_identity and previous.get('analysis_params')==analysis_params:
                 marks=previous['marks']
                 self._progress(.94,'复用已完成的识别，应用当前集锦规则')
             else:
-                if native:
+                if native and wegame.needs_full_scan(native):
+                    self._progress(.01,f'官方结算 {native["official_kills"]} 杀（含人机），精彩时刻只记了 '
+                                       f'{native["kill_points"]} 个，扫描整局补上漏记的干员击杀')
+                    observations=self._analyze_source(source,settings)
+                    marks=wegame.supplement_marks(wegame.verified_marks(native,observations),observations)
+                elif native:
                     self._progress(.01,'已读取官方时刻名称与时间，仅核对击杀点附近的干员身份')
                     observations=self._analyze_source(source,settings,
                         scan_windows=wegame.verification_windows(native,meta['duration'])) if native['kill_points'] else []
@@ -341,8 +396,10 @@ class WorkflowService:
                                        review_candidates=sum(bool(m.get('review_required',True)) for m in marks)))
             if native:
                 result['official_events']={k:v for k,v in native.items() if k!='marks'}
+                # 官方结算含人机；对局的击杀数与击杀标记只算干员。
                 result['summary'].update(official_kills=native['official_kills'],
-                    kill_points=native['kill_points'],loot_points=native['loot_points'])
+                    kill_points=sum(m['event_type']=='kill' for m in marks),loot_points=native['loot_points'])
+                result['official_events']['warnings']=[w for w in native['warnings'] if not w.startswith('官方结算')]
             if not highlights and not settings.organize_originals:
                 self._update(row['id'], status='no_highlights', result=json.dumps(result, ensure_ascii=False),
                              completed=time.time(), error='没有确认的多杀片段，原片保留')
@@ -395,6 +452,7 @@ class WorkflowService:
             manifest = out_dir / '识别记录.json'
             if settings.organize_originals:
                 self._archive_original(row,source,source_fp,result,settings)
+                self._release_guard(row)
                 self._prune_superseded(row,result)
             completed = time.time()
             # 低置信度候选保留在记录中供七天内复核，不贡献击杀数或多杀片段。
@@ -485,7 +543,8 @@ class WorkflowService:
         root=Path(settings.output_root).resolve()
         root.mkdir(parents=True,exist_ok=True)
         summary=result['summary']
-        official=summary.get('official_kills')
+        # 文件夹名只算干员击杀；官方结算含人机，只写进录像说明。
+        official=summary.get('kill_points')
         target=root/archive.bundle_name(row['path'],row['id'],
             official if official is not None else summary['confirmed_kills'],
             summary['has_highlights'],official=official is not None)
@@ -575,9 +634,9 @@ class WorkflowService:
               '高光成片长期保留。自动流程不上传，不再保存另一份整局缓存。\n')
         if result.get('official_events'):
             info=result['official_events']
-            text=(f'官方结算：{info["official_kills"]} 杀（不等同于已核对的不同干员人数）\n'
-                  f'官方事件：{info["kill_points"]} 个击杀点，{info["loot_points"]} 个摸金点；摸金不计入多杀。\n'
-                  '时间与时刻名称直接读取本地 DB；仅在击杀点附近通过画面核对不同干员。\n'
+            text=(f'官方结算：{info["official_kills"]} 杀（含人机，不计入集锦）\n'
+                  f'干员击杀点：{summary.get("kill_points",info["kill_points"])} 个，摸金点 {info["loot_points"]} 个；摸金不计入多杀。\n'
+                  '时间与时刻名称直接读取本地 DB；官方漏记的干员击杀由整局画面识别补上。\n'
                   +'\n'.join(info['warnings'])+'\n'+text)
         (directory/'录像说明.txt').write_text(text,encoding='utf-8')
         if not (directory/'剪辑工程.json').exists():projects.save(row,projects.load(row))
@@ -861,6 +920,17 @@ class WorkflowService:
             except OSError as exc:
                 self._update(row['id'],error=f'集锦包已移除，残留临时文件夹 {trash}：{exc}')
 
+    def remove_missing(self,record_id):
+        """原片已不在、也没有集锦包的记录只剩队列里一行，移除时不碰任何文件。"""
+        with self._lock:
+            row=self.recording(record_id)
+            if not row:raise ValueError('记录不存在')
+            if row['status']!='missing' or row['archive_dir']:
+                raise ValueError('只有「原片找不到了」且没有集锦包的记录可以直接移除')
+            if self._source_path(row).exists():
+                raise ValueError('原片又出现了，请点「重新识别」处理它')
+            self._update(row['id'],status='removed',result=None,cleanup_after=None,allow_cleanup=0,error=None)
+
     def retry(self, record_id: str):
         with self._lock, self._db() as db:
             row = db.execute('SELECT * FROM recordings WHERE id=?', (record_id,)).fetchone()
@@ -884,8 +954,21 @@ class WorkflowService:
         # 只有真正启动监控服务时恢复中断任务，单纯导入/查看状态不改正在处理的队列。
         with self._db() as db:
             db.execute("UPDATE recordings SET status='waiting' WHERE status='processing'")
+        self.flatten_manual_exports()
         self._thread = threading.Thread(target=self._loop, daemon=True, name='record-workflow')
         self._thread.start()
+
+    def flatten_manual_exports(self):
+        """启动时把旧版放在子目录里的手动剪辑挪到集锦包根目录；被占用的下次启动再挪。"""
+        with self._db() as db:
+            rows=[dict(r) for r in db.execute(
+                "SELECT * FROM recordings WHERE archive_dir IS NOT NULL AND status!='removed'")]
+        moved=0
+        for row in rows:
+            try:
+                with self._lock:moved+=projects.flatten_manual_exports(row)
+            except (OSError,ValueError,KeyError):continue
+        return moved
 
     def stop(self):
         self._stop.set()
@@ -895,6 +978,8 @@ class WorkflowService:
             try:
                 if self.settings.enabled and self.settings.configured:
                     self.discover()
+                if self.settings.configured:
+                    self.protect()
                 if self.settings.configured and self._may_process():
                     self.process_next()
                 self.cleanup_due()

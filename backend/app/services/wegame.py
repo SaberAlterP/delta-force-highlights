@@ -123,6 +123,31 @@ def verified_marks(data, observations):
     return marks
 
 
+def needs_full_scan(data):
+    """精彩时刻只记录部分击杀；结算击杀更多时，扫描整局补上漏记的干员击杀（人机不算）。"""
+    return data['official_kills'] is not None and data['official_kills']>data['kill_points']
+
+
+def supplement_marks(marks, observations, near=3.):
+    """把整局画面识别到、官方没记录的干员击杀补成标记。"""
+    official=[m['time'] for m in marks if m['event_type']=='kill']
+    bound={m.get('verification_time') for m in marks if m.get('verification_time') is not None}
+    merged=list(marks)
+    for observed in observations:
+        if observed.get('event_type') in {'assist','squad'} or observed['time'] in bound:continue
+        # 同一目标的 OCR 变体会连着出现几次，只补第一次。
+        if any(abs(observed['time']-t)<=near for t in official):continue
+        official.append(observed['time'])
+        merged.append(dict(observed,id='vis_'+observed['id'],event_type='kill',source='visual',event_name='击杀'))
+    merged.sort(key=lambda m:m['time'])
+    # 官方点与补充点混合后按时间重新编号。
+    number=0
+    for mark in merged:
+        if mark['event_type']!='kill':continue
+        number+=1;mark['label']=f'击杀{number}'
+    return merged
+
+
 class EventIndex:
     def __init__(self, directory=None):
         self.directory=Path(directory) if directory else default_directory()

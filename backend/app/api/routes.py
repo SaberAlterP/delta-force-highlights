@@ -20,7 +20,7 @@ from ..models import (
     AnalyzeRequest, CleanupRequest, ExportRequest, ExportResult, JobStatus,
     StorageDeleteRequest, StorageRestoreRequest, VideoMeta,
 )
-from ..services import archive, exporter, projects, video, workers
+from ..services import archive, desktop, exporter, projects, video, workers
 from ..services.media import video_response
 from ..services.cache import cache
 from ..services.parameters import DetectParams
@@ -156,8 +156,7 @@ def workflow_open_folder(values: dict):
             raise HTTPException(400,'非法归档目录')
     else:path=Path(workflow.settings.output_root)
     if not path.is_dir():raise HTTPException(404,'集锦文件夹尚未生成')
-    if os.name=='nt':
-        subprocess.Popen(['explorer.exe',str(path)],creationflags=subprocess.CREATE_NO_WINDOW)
+    desktop.open_folder(path)
     return dict(path=str(path))
 
 
@@ -205,6 +204,14 @@ def workflow_delete_bundle(record_id: str):
         workflow.delete_bundle(record_id)
         return {'ok':True}
     except (ValueError,OSError) as exc:raise HTTPException(422,str(exc))
+
+
+@router.post('/workflow/{record_id}/remove-missing')
+def workflow_remove_missing(record_id: str):
+    try:
+        workflow.remove_missing(record_id)
+        return {'ok':True}
+    except ValueError as exc:raise HTTPException(422,str(exc))
 
 
 @router.post('/workflow/{record_id}/edit')
@@ -454,9 +461,11 @@ def start_export(req: ExportRequest):
         matches=[projects.SOURCE_ID.fullmatch(c.upload_id) for c in req.clips]
         record_id=matches[0][1] if matches[0] and all(m and m[1]==matches[0][1] for m in matches) else None
         row=workflow.recording(record_id) if record_id else None
-        root=projects.directory(row)/'手动剪辑' if row else None
+        # 归档素材的手动剪辑直接放在集锦包根目录，和自动高光一起
+        root=projects.directory(row) if row else None
         result=exporter.export_clips(specs, merge=req.merge,accurate=req.accurate,
-            stretch_169=req.stretch_169,progress_cb=cb,cancel_cb=job.is_cancelled,output_root=root)
+            stretch_169=req.stretch_169,progress_cb=cb,cancel_cb=job.is_cancelled,output_root=root,
+            flat=bool(row))
         if row:
             files=[]
             for spec,item in zip(specs,result['files']):
@@ -468,7 +477,7 @@ def start_export(req: ExportRequest):
                 files.append(dict(name=path.name,path=path.relative_to(projects.directory(row)).as_posix()))
             with workflow._lock:
                 project=projects.load(row)
-                project['manual_exports'].append(dict(id=Path(result['dir']).name,
+                project['manual_exports'].append(dict(id=uuid.uuid4().hex,
                     created_at=time.time(),files=files,stretch_169=req.stretch_169))
                 projects.save(row,project)
         return result
@@ -530,12 +539,19 @@ def download_merged(job_id: str):
 
 @router.get("/export/{job_id}/zip")
 def download_zip(job_id: str):
-    out_dir = _export_dir(job_id)
-    zip_path = out_dir / "clips.zip"
+    _export_dir(job_id)
+    # 只打包这次导出的文件：集锦包根目录里还有整局原片和其他片段
+    result = jobs.get(job_id).snapshot()["result"]
+    paths = [Path(f["path"]) for f in result.get("files", [])]
+    if result.get("merged"):
+        paths.append(Path(result["merged"]))
+    config.CLIP_DIR.mkdir(parents=True, exist_ok=True)
+    zip_path = config.CLIP_DIR / f"{job_id}.zip"
     if not zip_path.exists():
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_STORED) as zf:
-            for mp4 in sorted(out_dir.glob("*.mp4")):
-                zf.write(mp4, mp4.name)
+            for mp4 in paths:
+                if mp4.is_file():
+                    zf.write(mp4, mp4.name)
     return FileResponse(zip_path, media_type="application/zip", filename="clips.zip")
 
 

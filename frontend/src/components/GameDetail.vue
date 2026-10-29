@@ -49,11 +49,15 @@ async function open(source) {
   } catch (e) { error.value = e?.response?.data?.detail || '无法载入这段素材' }
 }
 
-// 选中一局时自动载入：有高光先看高光 1，否则整局
+// 原片删掉、也没有高光时，手动剪辑仍然可以看
+const manualFiles = computed(() => (record.value?.manual_exports || []).flatMap(job => job.files.map(f => ({ job, f }))))
+
+// 选中一局时自动载入：有高光先看高光 1，否则整局；都没有就播第一个手动剪辑
 watch(() => record.value?.id, () => { message.value = ''; error.value = ''; manualPlay.value = null })
-watch(() => [record.value?.id, sources.value.length], ([id]) => {
-  if (!id || editingThis.value || !sources.value.length) return
-  open(sources.value.find(s => s.index === 0) || sources.value[0])
+watch(() => [record.value?.id, sources.value.length, manualFiles.value.length], ([id]) => {
+  if (!id || editingThis.value || manualPlay.value) return
+  if (sources.value.length) open(sources.value.find(s => s.index === 0) || sources.value[0])
+  else if (finished.value && manualFiles.value.length) playManual(manualFiles.value[0].job, manualFiles.value[0].f)
 }, { immediate: true })
 
 async function act(fn, done) {
@@ -123,8 +127,8 @@ function removeBundle() {
           <span class="eyebrow" :class="statusInfo(record).tone">{{ statusInfo(record).label }}</span>
           <h1>{{ title(record) }}</h1>
           <p v-if="summary" class="sub">
-            <b class="kills">{{ killCount(record) }}</b> {{ summary.official_kills != null ? '杀（官方结算）' : '杀（画面识别）' }}
-            <template v-if="result.official_events"> · 核对到 {{ summary.confirmed_kills }} 名不同干员 · 摸金 {{ summary.loot_points }} 次</template>
+            <b class="kills">{{ killCount(record) }}</b> {{ summary.official_kills != null ? '杀（干员）' : '杀（画面识别）' }}
+            <template v-if="result.official_events"> · 官方结算 {{ summary.official_kills }} 杀（含人机） · 核对到 {{ summary.confirmed_kills }} 名不同干员 · 摸金 {{ summary.loot_points }} 次</template>
             · {{ result.files.length ? `${result.files.length} 段集锦` : `没有 ${store.workflow.settings.window_seconds} 秒内 ${store.workflow.settings.min_operators} 杀的片段` }}
           </p>
           <p v-else class="sub muted">{{ record.path }}</p>
@@ -146,7 +150,7 @@ function removeBundle() {
       <p v-if="record.error && record.status !== 'waiting'" class="notice" :class="{ bad: record.status === 'error' }">{{ record.error }}</p>
       <p v-if="result?.official_events?.warnings?.length" class="notice">{{ result.official_events.warnings.join('；') }}</p>
 
-      <div v-if="sources.length" class="sources" role="tablist">
+      <div v-if="sources.length || manualFiles.length" class="sources" role="tablist">
         <span v-for="s in sources" :key="s.key" class="chip" :class="{ on: store.video?.upload_id === s.key && !manualPlay }">
           <button role="tab" :aria-selected="store.video?.upload_id === s.key" @click="open(s)">{{ s.label }}</button>
           <button v-if="s.index !== null && idle" class="x" :disabled="busy" :title="`删除${s.label}`" :aria-label="`删除${s.label}`" @click="removeHighlight(s)">✕</button>
@@ -188,7 +192,7 @@ function removeBundle() {
         <KillList />
         <ExportPanel />
       </div>
-      <p v-if="editingThis" class="foot muted">标记的修改会自动存回这局的文件夹（{{ store.projectSaveStatus || '剪辑工程.json' }}）。手动导出的片段保存在文件夹里的「手动剪辑」。</p>
+      <p v-if="editingThis" class="foot muted">标记的修改会自动存回这局的文件夹（{{ store.projectSaveStatus || '剪辑工程.json' }}）。手动导出的片段和自动高光一起放在这局的文件夹里，文件名以「手动」开头。</p>
     </template>
 
     <!-- 原片保留与删除 -->

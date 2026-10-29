@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 import uuid
 from concurrent.futures import CancelledError
 from pathlib import Path
@@ -129,12 +130,32 @@ def export_clips(specs: list[dict], merge: bool, accurate: bool,
                  stretch_169: bool = False,
                  progress_cb: Callable[[float, str], None] | None = None,
                  cancel_cb: Callable[[], bool] | None = None,
-                 output_root: Path | None = None) -> dict:
+                 output_root: Path | None = None, flat: bool = False) -> dict:
     """specs: [{src, kill_id, label, start, end}, ...]（每个片段带自己的源文件 src，支持跨视频）
+    flat=True 时直接写进 output_root（集锦包根目录），和自动高光放在一起。
     返回 {"files": [{name, path}], "merged": path|None}
     """
-    out_dir = (output_root or config.CLIP_DIR) / uuid.uuid4().hex
+    out_dir = output_root if flat else (output_root or config.CLIP_DIR) / uuid.uuid4().hex
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    def place(name: str) -> Path:
+        path = out_dir / name
+        return path.with_stem(path.stem + "_" + uuid.uuid4().hex[:6]) if path.exists() else path
+
+    def cut_to(out_path: Path, write: Callable[[Path], None]) -> Path:
+        if not flat:
+            write(out_path)
+            return out_path
+        # 先写临时文件再改名，失败时不会在集锦包里留下半截视频
+        pending = out_dir / f".pending_{uuid.uuid4().hex}.mp4"
+        try:
+            write(pending)
+            out_path = place(out_path.name)
+            pending.rename(out_path)
+        finally:
+            if pending.exists() and not pending.is_symlink():
+                pending.unlink()
+        return out_path
 
     files: list[dict] = []
     n = len(specs)
@@ -143,9 +164,12 @@ def export_clips(specs: list[dict], merge: bool, accurate: bool,
             raise CancelledError("导出已取消")
         label = spec.get("label") or f"kill_{i + 1:02d}"
         safe_label = "".join(c for c in label if c.isalnum() or c in "._-")[:40] or f"kill_{i+1:02d}"
-        out_path = out_dir / f"{i + 1:02d}_{safe_label}.mp4"
-        cut_clip(Path(spec["src"]), float(spec["start"]), float(spec["end"]), out_path,
-                 accurate=accurate, stretch_169=stretch_169, cancel_cb=cancel_cb)
+        start, end = float(spec["start"]), float(spec["end"])
+        name = (f"手动_{safe_label}_{start:.3f}-{end:.3f}s.mp4" if flat
+                else f"{i + 1:02d}_{safe_label}.mp4")
+        out_path = cut_to(out_dir / name, lambda path: cut_clip(
+            Path(spec["src"]), start, end, path,
+            accurate=accurate, stretch_169=stretch_169, cancel_cb=cancel_cb))
         files.append({"name": out_path.name, "path": str(out_path)})
         if progress_cb:
             progress_cb((i + 1) / max(1, n) * (0.9 if merge else 1.0),
@@ -153,8 +177,9 @@ def export_clips(specs: list[dict], merge: bool, accurate: bool,
 
     merged_path = None
     if merge and files:
-        merged_path = out_dir / "highlight_merged.mp4"
-        merge_clips([Path(f["path"]) for f in files], merged_path, cancel_cb=cancel_cb)
+        name = f"手动合集_{time.strftime('%Y%m%d-%H%M%S')}.mp4" if flat else "highlight_merged.mp4"
+        merged_path = cut_to(out_dir / name, lambda path: merge_clips(
+            [Path(f["path"]) for f in files], path, cancel_cb=cancel_cb))
         if progress_cb:
             progress_cb(1.0, "已合并为集锦")
 

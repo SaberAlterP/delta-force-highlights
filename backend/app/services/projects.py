@@ -4,6 +4,7 @@ import math
 from pathlib import Path
 import re
 import time
+import uuid
 
 from .archive import atomic_json
 
@@ -75,3 +76,33 @@ def save_marks(row,source_id,kills,segments=None):
 
 def manual_exports(row):
     return load(row).get('manual_exports',[])
+
+
+def flatten_manual_exports(row):
+    """旧版把手动剪辑放在「手动剪辑/<导出编号>/」里；挪到集锦包根目录，和自动高光放一起。"""
+    base=directory(row)
+    old=base/'手动剪辑'
+    value=load(row)
+    moved=0
+    for entry in value.get('manual_exports',[]):
+        for item in entry['files']:
+            path=base/item['path']
+            # 只挪旧子目录里的文件，记录指向别处（比如整局原片）时不碰
+            if (not item['path'].startswith('手动剪辑/') or path.is_symlink() or not path.is_file()
+                    or not path.resolve().is_relative_to(old.resolve())):continue
+            name=item['name'] if item['name'].startswith('手动') else '手动_'+item['name']
+            target=base/name
+            if target.exists():target=target.with_stem(target.stem+'_'+uuid.uuid4().hex[:6])
+            path.rename(target)
+            item.update(name=target.name,path=target.name)
+            moved+=1
+    if moved:
+        save(row,value)
+        # 只删已经空了的旧目录
+        for folder in sorted(old.rglob('*'),key=lambda p:len(p.parts),reverse=True) if old.is_dir() else ():
+            if folder.is_dir() and not folder.is_symlink():
+                try:folder.rmdir()
+                except OSError:pass
+        try:old.rmdir()
+        except OSError:pass
+    return moved
