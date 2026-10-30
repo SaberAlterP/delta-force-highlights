@@ -9,6 +9,10 @@ python-multipart>=0.0.9
 opencv-python-headless>=4.11.0      # 4.11 起提供 Python 3.13 wheel
 numpy>=1.26                          # 3.13 上会安装 numpy 2.x
 
+# 集锦剪辑（音乐卡点）：歌曲节拍分析 + 剪辑助手
+librosa>=0.10
+anthropic>=2.0
+
 # OCR（依赖 torch / torchvision —— 请先按 CUDA 版本单独安装 PyTorch，见 README）
 easyocr>=1.7.1
 
