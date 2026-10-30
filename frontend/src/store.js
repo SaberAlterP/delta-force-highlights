@@ -11,6 +11,9 @@ const LS_STRETCH_169 = 'df.stretch169'
 const killsKey = (uploadId) => `df.kills.${uploadId}`
 const segmentsKey = (uploadId) => `df.segments.${uploadId}`
 const projectSaveTimers = new Map()
+const POLL_GIVE_UP = 15             // 连续这么多次查不到任务状态（约 12 秒），就当后台已重启、任务丢了
+let openRequest = 0                 // 只采用最后一次打开素材的结果，快速连点不会跳回上一局
+let workflowRequest = null          // 上一次状态刷新还没回来时不重复请求
 
 function uid() {
   return Math.random().toString(36).slice(2, 10)
@@ -103,8 +106,13 @@ export const useStore = defineStore('main', {
     },
 
     async refreshWorkflow() {
-      try { this.workflow = await api.workflowStatus(); this.workflowError = '' }
-      catch { this.workflowError = '暂时连不上本地后台，稍后自动重试' }
+      if (workflowRequest) return workflowRequest
+      workflowRequest = (async () => {
+        try { this.workflow = await api.workflowStatus(); this.workflowError = '' }
+        catch { this.workflowError = '暂时连不上本地后台，稍后自动重试' }
+        finally { workflowRequest = null }
+      })()
+      return workflowRequest
     },
 
     async saveWorkflowSettings(values) {
@@ -143,9 +151,12 @@ export const useStore = defineStore('main', {
     },
 
     async openArchiveVideo(recordId, clipIndex = null) {
+      const request = ++openRequest
       this.sourceLoading = true
       let data
-      try { data = await api.workflowEdit(recordId, clipIndex) } finally { this.sourceLoading = false }
+      try { data = await api.workflowEdit(recordId, clipIndex) } finally { if (request === openRequest) this.sourceLoading = false }
+      if (request !== openRequest) return
+      this.seekTo = null
       this.video = data.video
       this.currentTime = 0
       this.analyze = { jobId: null, state: 'idle', progress: 0, message: '', error: '' }
@@ -175,6 +186,8 @@ export const useStore = defineStore('main', {
     selectVideo(upload_id) {
       const v = this.library.find(x => x.upload_id === upload_id)
       if (!v) return
+      openRequest++
+      this.seekTo = null
       this.video = v
       this.selectedRecordId = null
       localStorage.setItem(LS_CURRENT, upload_id)
@@ -189,6 +202,7 @@ export const useStore = defineStore('main', {
       this.library = this.library.filter(v => v.upload_id !== upload_id)
       this._persistLibrary()
       localStorage.removeItem(killsKey(upload_id))
+      localStorage.removeItem(segmentsKey(upload_id))
       if (this.video?.upload_id === upload_id) {
         if (this.library.length) this.selectVideo(this.library[0].upload_id)
         else { this.video = null; this.kills = []; this.segments = []; localStorage.removeItem(LS_CURRENT) }
@@ -205,7 +219,7 @@ export const useStore = defineStore('main', {
     },
 
     clearVideo() {
-      this.library.forEach(v => localStorage.removeItem(killsKey(v.upload_id)))
+      this.library.forEach(v => { localStorage.removeItem(killsKey(v.upload_id)); localStorage.removeItem(segmentsKey(v.upload_id)) })
       this.library = []
       this.video = null
       this.kills = []
@@ -377,9 +391,11 @@ export const useStore = defineStore('main', {
 
     async _pollAnalyze(jobId) {
       return new Promise((resolve) => {
+        let misses = 0
         const timer = setInterval(async () => {
           try {
             const s = await api.analyzeStatus(jobId)
+            misses = 0
             this.analyze.progress = s.progress
             this.analyze.message = s.message
             this.analyze.state = s.state
@@ -390,7 +406,15 @@ export const useStore = defineStore('main', {
             } else if (s.state === 'cancelled') {
               clearInterval(timer); this.analyze = { jobId: null, state: 'idle', progress: 0, message: '', error: '' }; resolve()
             }
-          } catch (e) { /* 下次再试 */ }
+          } catch (e) {
+            // 偶尔失败下次再试；一直查不到多半是后台重启过，任务已经不在了
+            if (++misses >= POLL_GIVE_UP) {
+              clearInterval(timer)
+              this.analyze.state = 'error'
+              this.analyze.error = '和本地后台失去联系，识别任务可能已中断，请重新开始识别'
+              resolve()
+            }
+          }
         }, 800)
       })
     },
@@ -420,9 +444,11 @@ export const useStore = defineStore('main', {
 
     async _pollExport(jobId) {
       return new Promise((resolve) => {
+        let misses = 0
         const timer = setInterval(async () => {
           try {
             const s = await api.exportStatus(jobId)
+            misses = 0
             this.export.progress = s.progress
             this.export.message = s.message
             this.export.state = s.state
@@ -433,7 +459,14 @@ export const useStore = defineStore('main', {
             } else if (s.state === 'cancelled') {
               clearInterval(timer); this.export = { jobId: null, state: 'idle', progress: 0, message: '', error: '', files: [], hasMerged: false }; resolve()
             }
-          } catch (e) {}
+          } catch (e) {
+            if (++misses >= POLL_GIVE_UP) {
+              clearInterval(timer)
+              this.export.state = 'error'
+              this.export.error = '和本地后台失去联系，导出可能已中断，请重新导出'
+              resolve()
+            }
+          }
         }, 800)
       })
     },
