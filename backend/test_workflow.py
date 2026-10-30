@@ -200,6 +200,21 @@ class WorkflowTests(TestCase):
         self.assertEqual(updated['status'],'waiting')
         self.assertEqual(updated['allow_cleanup'],0)
 
+    def test_queued_history_is_processed_without_another_stability_wait(self):
+        row=self.service.status()['records'][0]
+        self.service.retry(row['id'])
+        with (patch('app.services.workflow._closed_by_recorder',return_value=True),
+              patch('app.services.workflow.video.probe',return_value=dict(duration=100,width=100,height=100))):
+            self.service.process_next(now=time.time()+1)
+        self.analyze.assert_called_once()
+
+    def test_retry_of_changed_file_restarts_stability_wait(self):
+        row=self.service.status()['records'][0]
+        self.old.write_bytes(b'old-but-rewritten')
+        self.service.retry(row['id'])
+        updated=self.service.status()['records'][0]
+        self.assertGreater(updated['stable_since'],time.time()-5)
+
     def test_restart_does_not_reprocess_success_or_history(self):
         path,row=self.new_file();self.ready(path,row)
         service=WorkflowService(self.root/'state');service.discover(now=500)
