@@ -40,8 +40,10 @@ onMounted(() => {
     fluid: true,
     aspectRatio: '16:9',
     playbackRates: [0.5, 1, 1.5, 2],
+    userActions: { hotkeys: false },
     sources: [{ src: api.videoUrl(store.video.upload_id), type: 'video/mp4' }],
   })
+  window.addEventListener('keydown', onGlobalKeydown)
   player.volume(DEFAULT_VOLUME)
   player.on('timeupdate', () => {
     currentTime.value = player.currentTime()
@@ -52,7 +54,7 @@ onMounted(() => {
   for (const name of ['canplay', 'playing', 'seeked', 'loadeddata', 'error']) player.on(name, () => setBuffering(false))
 })
 
-onBeforeUnmount(() => { clearTimeout(veilTimer); if (player) player.dispose() })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onGlobalKeydown); clearTimeout(veilTimer); if (player) player.dispose() })
 
 function renderMarkers() {
   if (!player) return
@@ -75,10 +77,42 @@ function renderMarkers() {
   })
 }
 
-function seek(t) {
+function seek(t, play = true) {
   if (!player) return
   player.currentTime(Math.max(0, t))
-  player.play()
+  if (play) player.play()
+}
+
+// 键盘：全局监听，直接读 player.currentTime()，不依赖 store 里 4Hz 的 timeupdate
+const FRAME = 1 / 60
+function stepBy(delta, pause = false) {
+  if (!player) return
+  const dur = player.duration() || duration.value || 0
+  const t = Math.max(0, Math.min(dur, (player.currentTime() || 0) + delta))
+  if (pause) player.pause()
+  player.currentTime(t)
+  currentTime.value = t
+  store.currentTime = t
+}
+function togglePlay() {
+  if (!player) return
+  if (player.paused()) player.play(); else player.pause()
+}
+function onGlobalKeydown(e) {
+  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || !player) return
+  const el = e.target
+  if (el?.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return
+  const isButton = !!el?.closest?.('button')
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault()
+    stepBy((e.key === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 5 : 1))
+  } else if (e.key === ',' || e.key === '.') {
+    e.preventDefault()
+    stepBy(e.key === ',' ? -FRAME : FRAME, true)
+  } else if ((e.key === ' ' || e.key.toLowerCase() === 'k') && !isButton) {
+    e.preventDefault()
+    togglePlay()
+  }
 }
 
 // 切换当前视频时，换播放源并重画标记
@@ -88,12 +122,12 @@ watch(() => store.video?.upload_id, (id, old) => {
     player.load()
     player.one('loadedmetadata', () => {
       renderMarkers()
-      if (store.seekTo) seek(store.seekTo.t)
+      if (store.seekTo) seek(store.seekTo.t, store.seekTo.play !== false)
     })
   }
 })
 
-watch(() => store.seekTo, (v) => { if (v) seek(v.t) })
+watch(() => store.seekTo, (v) => { if (v) seek(v.t, v.play !== false) })
 watch(() => store.kills.length, () => renderMarkers())
 watch(() => store.kills.map(k => k.time).join(','), () => renderMarkers())
 

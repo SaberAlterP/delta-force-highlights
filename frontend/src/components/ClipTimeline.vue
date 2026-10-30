@@ -107,10 +107,10 @@ function endDrag() {
   const seg = store.segments.find(s => s.id === info.id)
   if (!seg) return
   if (info.moved) store.updateSegment(seg.id, { start: seg.start, end: seg.end })
-  store.requestSeek(info.edge === 'end' ? seg.end : seg.start)
+  store.requestSeek(info.edge === 'end' ? seg.end : seg.start, false)
 }
 
-function seekToTrack(event) { store.requestSeek(timeAtClientX(event.clientX)) }
+function seekToTrack(event) { store.requestSeek(timeAtClientX(event.clientX), false) }
 function addHere() { focusedId.value = store.addSegmentAt(store.currentTime).id }
 function removeFocused() {
   if (!focused.value) return
@@ -124,21 +124,22 @@ function setEdge(edge, value) {
   if (edge === 'end' && t > seg.start) store.updateSegment(seg.id, { end: t })
 }
 
+// 窗口级快捷键（方向键 / 空格 / 逐帧在 VideoPlayer 里）
 function onKeydown(event) {
-  if (event.target.tagName === 'INPUT') return
+  if (!store.video || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
+  if (event.target?.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return
   const key = event.key.toLowerCase()
-  if (key === 'arrowleft' || key === 'arrowright') {
-    event.preventDefault()
-    const step = editStep.value * (event.shiftKey ? 10 : 1) * (key === 'arrowleft' ? -1 : 1)
-    store.requestSeek(Math.max(0, Math.min(duration.value, store.currentTime + step)))
-  } else if (key === 'i') setEdge('start', store.currentTime)
+  if (key === 'i') setEdge('start', store.currentTime)
   else if (key === 'o') setEdge('end', store.currentTime)
   else if (key === 'delete') removeFocused()
   else if (key === 'n') addHere()
+  else return
+  event.preventDefault()
 }
 
 watch(() => store.video?.upload_id, () => { focusedId.value = null })
-onBeforeUnmount(endDrag)
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); endDrag() })
 </script>
 
 <template>
@@ -158,7 +159,7 @@ onBeforeUnmount(endDrag)
       </div>
     </div>
 
-    <div ref="scrollerEl" class="timeline-scroller" tabindex="0" @wheel.ctrl.prevent="onZoomWheel" @keydown="onKeydown">
+    <div ref="scrollerEl" class="timeline-scroller" tabindex="0" @wheel.ctrl.prevent="onZoomWheel">
       <div ref="trackEl" class="track" :style="canvasStyle" @click="seekToTrack">
         <div class="ruler" aria-hidden="true">
           <span v-for="tick in rulerTicks" :key="tick.time" class="tick" :style="{ left: tick.left + '%' }"><i></i><em>{{ fmtTime(tick.time) }}</em></span>
@@ -196,7 +197,7 @@ onBeforeUnmount(endDrag)
     <p v-else class="tips muted">
       <template v-if="!segments.length">还没有片段。把播放头移到想剪的位置，点「在当前位置建片段」。</template>
       <template v-else>点片段选中它，拖两端调整范围、拖中间整体移动。</template>
-      快捷键（先点一下时间轴）：N 建片段 · I / O 把入点 / 出点设到播放头 · ← → 微移播放头 · Delete 删除片段 · Ctrl + 滚轮缩放
+      快捷键：空格 播放/暂停 · ← → 移动 1 秒（Shift 5 秒）· , . 逐帧 · N 建片段 · I / O 设入点 / 出点 · Delete 删除片段 · Ctrl + 滚轮缩放
     </p>
   </div>
 </template>
