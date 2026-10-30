@@ -155,6 +155,19 @@ class WorkflowTests(TestCase):
         updated=next(r for r in self.service.status()['records'] if r['id']==row['id'])
         self.assertEqual(updated['status'],'missing')
 
+    def test_changing_retention_days_reschedules_existing_originals(self):
+        path,row=self.new_file();self.ready(path,row)
+        result=dict(files=[],cleanup_after=1000+7*86400)
+        self.service._update(row['id'],retained_since=1000,completed=1000,cleanup_after=1000+7*86400,
+                             result=json.dumps(result))
+        kept=self.status_of(self.service.status()['records'][-1])
+        self.service._update(kept['id'],status='ready',allow_cleanup=0,cleanup_after=None)
+        self.service.configure(dict(retention_days=3))
+        updated=self.status_of(row)
+        self.assertEqual(updated['cleanup_after'],1000+3*86400)
+        self.assertEqual(updated['result']['cleanup_after'],1000+3*86400)
+        self.assertIsNone(self.status_of(kept)['cleanup_after'])
+
     def test_retention_never_uses_old_source_mtime(self):
         path,row=self.new_file();self.ready(path,row,due=10000)
         self.service.cleanup_due(now=9999)

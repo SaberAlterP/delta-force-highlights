@@ -154,6 +154,8 @@ class WorkflowService:
                 notified='REAL',notification_error='TEXT',guard_path='TEXT').items():
                 if name not in columns:
                     db.execute(f'ALTER TABLE recordings ADD COLUMN {name} {kind}')
+        # 旧版本改天数时没有重算，启动时补一次。
+        self._reschedule_cleanup()
 
     @contextmanager
     def _db(self):
@@ -170,8 +172,35 @@ class WorkflowService:
             updated = WorkflowSettings(**(asdict(self.settings) | values)).validate()
             self.settings_path.write_text(json.dumps(asdict(updated), ensure_ascii=False,
                                                      indent=2), encoding='utf-8')
-            self.settings = updated
+            previous, self.settings = self.settings, updated
+            if previous.retention_days != updated.retention_days:
+                self._reschedule_cleanup()
         return asdict(updated)
+
+    def _reschedule_cleanup(self):
+        """保留天数改了，已有原片的清理时间也按新天数从保留起点重算。"""
+        days = self.settings.retention_days
+        with self._db() as db:
+            rows = [dict(r) for r in db.execute(
+                "SELECT * FROM recordings WHERE allow_cleanup=1 AND cleanup_after IS NOT NULL "
+                "AND status NOT IN ('deleted','removed','processing')")]
+        for row in rows:
+            retained = row['retained_since'] or row['completed']
+            if not retained:
+                continue
+            cleanup_after = retained + days * 86400
+            if abs(cleanup_after - row['cleanup_after']) < 1:
+                continue
+            result = json.loads(row['result']) if row['result'] else None
+            if result and result.get('cleanup_after'):
+                result['cleanup_after'] = cleanup_after
+            self._update(row['id'], cleanup_after=cleanup_after,
+                         result=json.dumps(result, ensure_ascii=False) if result else row['result'])
+            if result and row['archive_dir'] and result.get('summary'):
+                try:
+                    self._write_bundle(row, result, row['status'])
+                except OSError:
+                    pass
 
     def _sources(self):
         if not self.settings.watch_root:
