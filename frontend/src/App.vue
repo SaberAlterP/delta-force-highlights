@@ -7,6 +7,7 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import GuidePanel from './components/GuidePanel.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import AnalyzePanel from './components/AnalyzePanel.vue'
+import MontageStudio from './montage/MontageStudio.vue'
 
 const store = useStore()
 let timer
@@ -20,6 +21,11 @@ const LS_SIDEBAR = 'sidebar_collapsed'
 const sidebarCollapsed = ref(localStorage.getItem(LS_SIDEBAR) === '1')
 watch(sidebarCollapsed, v => localStorage.setItem(LS_SIDEBAR, v ? '1' : '0'))
 
+// 两个平行的部分：自动剪素材（原有）/ 集锦剪辑（音乐卡点）
+const LS_MODE = 'df.mode'
+const mode = ref(localStorage.getItem(LS_MODE) === 'montage' ? 'montage' : 'clips')
+watch(mode, v => localStorage.setItem(LS_MODE, v))
+
 function onKey(e) { if (e.key === 'Escape') store.panel = '' }
 // 页面在后台标签页时不轮询，切回来立刻刷新一次
 function onVisible() { if (!document.hidden) store.refreshWorkflow() }
@@ -27,7 +33,7 @@ onMounted(async () => {
   store.loadConfig()
   await store.refreshWorkflow()
   // 第一次打开、还没填设置时直接给出指南
-  if (store.workflow && !ready.value) store.panel = 'guide'
+  if (store.workflow && !ready.value && mode.value === 'clips') store.panel = 'guide'
   timer = setInterval(() => { if (!document.hidden) store.refreshWorkflow() }, 4000)
   window.addEventListener('keydown', onKey)
   document.addEventListener('visibilitychange', onVisible)
@@ -46,6 +52,10 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
       <div class="brand">
         <span class="mark">▲</span>
         <div><b>三角洲 · 多杀集锦</b><small>打完一局，自动剪好高光</small></div>
+      </div>
+      <div class="modes" role="tablist">
+        <button role="tab" :aria-selected="mode === 'clips'" :class="{ on: mode === 'clips' }" @click="mode = 'clips'">自动剪素材</button>
+        <button role="tab" :aria-selected="mode === 'montage'" :class="{ on: mode === 'montage' }" @click="mode = 'montage'">集锦剪辑</button>
       </div>
       <button v-if="settings" class="status" :class="{ live: settings.enabled && ready }" @click="store.panel = 'settings'"
               :title="store.workflow.paused || (settings.enabled ? '点击打开设置' : '自动监控已暂停，点击打开设置')">
@@ -67,10 +77,11 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
     <p v-if="store.workflowError" class="offline" role="alert">{{ store.workflowError }}</p>
     <p v-else-if="store.workflow?.error" class="offline" role="alert">后台提示：{{ store.workflow.error }}</p>
 
-    <main class="layout" :class="{ narrow: sidebarCollapsed }">
+    <main v-if="mode === 'clips'" class="layout" :class="{ narrow: sidebarCollapsed }">
       <GameList v-model:collapsed="sidebarCollapsed" />
       <GameDetail />
     </main>
+    <MontageStudio v-else />
 
     <Transition name="drawer">
       <div v-if="store.panel" class="scrim" @click.self="store.panel = ''">
@@ -104,6 +115,9 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
 .status .q { color: var(--accent); margin-left: 4px; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px #3fb95000; } }
 .spacer { flex: 1; }
+.modes { display: flex; padding: 3px; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; }
+.modes button { border: 0; padding: 5px 14px; font-size: 13px; background: transparent; color: var(--muted); border-radius: 6px; }
+.modes button.on { background: var(--panel-2); color: var(--accent); font-weight: 600; }
 nav { display: flex; gap: 6px; } nav button { font-size: 13px; padding: 7px 14px; }
 .offline { margin: 10px 18px 0; padding: 8px 12px; font-size: 12px; color: #f0a6a8; background: #2a1718; border: 1px solid #46282b; border-radius: 6px; }
 .layout { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: start; }
