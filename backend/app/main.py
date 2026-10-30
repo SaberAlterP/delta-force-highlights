@@ -1,8 +1,11 @@
 """FastAPI 应用入口。"""
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import config
@@ -20,6 +23,29 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+
+def _hostname(value: str) -> str:
+    try:
+        return (urlsplit(value if "//" in value else "//" + value).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+@app.middleware("http")
+async def local_only(request, call_next):
+    # 后端能删文件、改设置。浏览器里任何网页都能向 127.0.0.1 发请求，
+    # 所以只认本机 Host，写操作还要求来自本页面或开发用的 Vite 页面。
+    if not request.url.path.startswith("/api"):
+        return await call_next(request)
+    if _hostname(request.headers.get("host", "")) not in config.LOCAL_HOSTS:
+        return JSONResponse({"detail": "只允许从本机访问"}, status_code=403)
+    origin = request.headers.get("origin")
+    if origin and request.method not in ("GET", "HEAD", "OPTIONS"):
+        same_origin = urlsplit(origin).netloc == request.headers.get("host", "")
+        if not same_origin and origin not in config.CORS_ORIGINS:
+            return JSONResponse({"detail": "拒绝来自其他网页的请求"}, status_code=403)
+    return await call_next(request)
 
 
 @app.middleware("http")

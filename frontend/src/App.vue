@@ -21,15 +21,22 @@ const sidebarCollapsed = ref(localStorage.getItem(LS_SIDEBAR) === '1')
 watch(sidebarCollapsed, v => localStorage.setItem(LS_SIDEBAR, v ? '1' : '0'))
 
 function onKey(e) { if (e.key === 'Escape') store.panel = '' }
+// 页面在后台标签页时不轮询，切回来立刻刷新一次
+function onVisible() { if (!document.hidden) store.refreshWorkflow() }
 onMounted(async () => {
   store.loadConfig()
   await store.refreshWorkflow()
   // 第一次打开、还没填设置时直接给出指南
   if (store.workflow && !ready.value) store.panel = 'guide'
-  timer = setInterval(() => store.refreshWorkflow(), 4000)
+  timer = setInterval(() => { if (!document.hidden) store.refreshWorkflow() }, 4000)
   window.addEventListener('keydown', onKey)
+  document.addEventListener('visibilitychange', onVisible)
 })
-onUnmounted(() => { clearInterval(timer); window.removeEventListener('keydown', onKey) })
+onUnmounted(() => {
+  clearInterval(timer)
+  window.removeEventListener('keydown', onKey)
+  document.removeEventListener('visibilitychange', onVisible)
+})
 watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playerId) store.setPlayerId(id) })
 </script>
 

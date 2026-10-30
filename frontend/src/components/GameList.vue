@@ -99,6 +99,7 @@ function day(r) {
       <p v-if="!shown.length && !collapsed" class="empty">
         <template v-if="!store.workflow">正在连接本地后台…</template>
         <template v-else-if="filter === 'history'">没有未处理的旧录像。</template>
+        <template v-else-if="!store.workflow.settings.player_id || !store.workflow.settings.watch_root || !store.workflow.settings.output_root">还没设置好。<br>在右上角「设置」里填游戏 ID、录像文件夹和集锦文件夹。</template>
         <template v-else-if="!store.workflow.settings.enabled">自动监控已暂停，打完一局后不会自动处理。<br>可在右上角「设置」里开启。</template>
         <template v-else>还没有对局。打完一局后，录像写完约 2 分钟会自动出现在这里。</template>
       </p>
