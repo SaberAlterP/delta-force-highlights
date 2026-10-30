@@ -1,0 +1,66 @@
+{
+  "description": "三角洲集锦音乐卡点剪辑的 agent 工具定义（OpenAI/Anthropic function-calling 通用格式）。后端把每个工具映射到 montage 包的同名 Python 函数即可。",
+  "tools": [
+    {
+      "name": "analyze_song",
+      "description": "分析一首歌：节拍（对准底鼓）、小节线、按听感轻重排序的重音（drop 回来的第一拍最重）。支持 .ncm/.mp3/.wav。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "song_path": {"type": "string"},
+          "workdir": {"type": "string"}
+        },
+        "required": ["song_path", "workdir"]
+      }
+    },
+    {
+      "name": "collect_kills",
+      "description": "扫描集锦包根目录，提取每段高光里每个击杀的真实开枪画面时间（用画面提示前最后一声枪响，不用官方击杀时间）。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "root": {"type": "string", "description": "集锦包根目录（平台设置里的集锦文件夹）"},
+          "workdir": {"type": "string"}
+        },
+        "required": ["root", "workdir"]
+      }
+    },
+    {
+      "name": "make_plan",
+      "description": "生成时间线：最重的重音配击杀，每个击杀前留前因，镜头切在拍点上，长时间无击杀自动快进。返回 timeline JSON，可修改后调用 retime。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "workdir": {"type": "string"},
+          "config": {"type": "object", "description": "覆盖 montage/config.py 里的任意参数，如 {\"plan\": {\"duration\": 45, \"kills_per_shot\": 2, \"transition\": \"push\", \"transition_every\": 3}}"}
+        },
+        "required": ["workdir"]
+      }
+    },
+    {
+      "name": "retime",
+      "description": "修改 timeline 后重算变速。可改：镜头顺序、删镜头、换片段 file、kills[].at（击杀落在成片第几秒）、删击杀、transition_in、镜头 end。不可行的改动（需要慢放）会在 errors 里说明。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "timeline": {"type": "object"},
+          "config": {"type": "object"}
+        },
+        "required": ["timeline"]
+      }
+    },
+    {
+      "name": "render_timeline",
+      "description": "按 timeline 出片（歌从 song_start 开始放）。render.hq=true 时补帧，慢约 10 倍。",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "timeline": {"type": "object"},
+          "out": {"type": "string"},
+          "config": {"type": "object"}
+        },
+        "required": ["timeline", "out"]
+      }
+    }
+  ]
+}

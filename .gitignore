@@ -34,3 +34,6 @@ backend/storage/
 backend/assets/id_templates/*.png
 backend/assets/id_templates/player_id.txt
 backend/tests/fixtures/killfeed/
+
+# montage：网易云 ncm 解码器只在本地使用，不发布
+montage/ncm.py
