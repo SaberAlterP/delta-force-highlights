@@ -97,8 +97,6 @@ watch(() => store.seekTo, (v) => { if (v) seek(v.t, v.play !== false) })
 watch(() => store.kills.length, () => renderMarkers())
 watch(() => store.kills.map(k => k.time).join(','), () => renderMarkers())
 
-function addSegmentHere() { store.addSegmentAt(currentTime.value) }
-
 // 区域叠加（百分比）
 function boxStyle(region) {
   const [x1, y1, x2, y2] = region
@@ -131,8 +129,6 @@ function boxStyle(region) {
     <div class="row controls">
       <span class="time muted">{{ fmtTime(currentTime) }} / {{ fmtTime(duration) }}</span>
       <span v-if="stretchPreview" class="preview-mode">4:3 → 16:9 拉伸预览</span>
-      <span class="spacer"></span>
-      <button class="primary" @click="addSegmentHere">＋ 在当前位置建片段</button>
     </div>
   </div>
 </template>
