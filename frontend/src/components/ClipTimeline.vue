@@ -222,7 +222,7 @@ onBeforeUnmount(() => { endDrag(); window.removeEventListener('keydown', onGloba
     <p v-else class="tips muted">
       <template v-if="!segments.length">还没有片段。把播放头移到想剪的位置，点「在当前位置建片段」。</template>
       <template v-else>点片段选中它，拖两端调整范围、拖中间整体移动。</template>
-      快捷键（先点一下时间轴）：N 建片段 · I / O 把入点 / 出点设到播放头 · ← → 微移播放头 · Delete 删除片段 · Ctrl + 滚轮缩放
+      快捷键（先点一下时间轴）：N 建片段 · I / O 把入点 / 出点设到播放头 · ← → 微移播放头 · , . 逐帧 · 空格 播放/暂停 · Delete 删除片段 · Ctrl + 滚轮缩放
     </p>
   </div>
 </template>

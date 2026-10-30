@@ -50,9 +50,26 @@ onMounted(() => {
   player.on('loadedmetadata', renderMarkers)
   for (const name of ['loadstart', 'waiting', 'seeking']) player.on(name, () => setBuffering(true))
   for (const name of ['canplay', 'playing', 'seeked', 'loadeddata', 'error']) player.on(name, () => setBuffering(false))
+  window.addEventListener('keydown', onPlayKey)
 })
 
-onBeforeUnmount(() => { clearTimeout(veilTimer); if (player) player.dispose() })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onPlayKey); clearTimeout(veilTimer); if (player) player.dispose() })
+
+// 方向键在时间轴里处理；这里补逐帧（, .）和空格 / K 播放暂停
+function onPlayKey(e) {
+  if (!player || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || store.panel) return
+  if (e.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+  if (e.key === ',' || e.key === '.') {
+    e.preventDefault()
+    player.pause()
+    const t = Math.max(0, Math.min(player.duration() || duration.value, player.currentTime() + (e.key === ',' ? -1 : 1) / 60))
+    player.currentTime(t)
+    currentTime.value = store.currentTime = t
+  } else if ((e.key === ' ' || e.key.toLowerCase() === 'k') && !e.target?.closest?.('button')) {
+    e.preventDefault()
+    player.paused() ? player.play() : player.pause()
+  }
+}
 
 function renderMarkers() {
   if (!player) return
