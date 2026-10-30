@@ -301,7 +301,7 @@ export const useStore = defineStore('main', {
       return { start: this._clamp(kill.time - kill.pre), end: this._clamp(kill.time + kill.post) }
     },
 
-    requestSeek(t) { this.seekTo = { t, ts: Date.now() } },
+    requestSeek(t, play = true) { this.seekTo = { t, play, ts: Date.now() } },
 
     // -------- 片段（与击杀标记分开；导出按片段）--------
     addSegmentAt(time) {
