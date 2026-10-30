@@ -107,10 +107,10 @@ function endDrag() {
   const seg = store.segments.find(s => s.id === info.id)
   if (!seg) return
   if (info.moved) store.updateSegment(seg.id, { start: seg.start, end: seg.end })
-  store.requestSeek(info.edge === 'end' ? seg.end : seg.start, false)
+  store.requestSeek(info.edge === 'end' ? seg.end : seg.start)
 }
 
-function seekToTrack(event) { store.requestSeek(timeAtClientX(event.clientX), false) }
+function seekToTrack(event) { store.requestSeek(timeAtClientX(event.clientX)) }
 function addHere() { focusedId.value = store.addSegmentAt(store.currentTime).id }
 function removeFocused() {
   if (!focused.value) return
@@ -124,22 +124,47 @@ function setEdge(edge, value) {
   if (edge === 'end' && t > seg.start) store.updateSegment(seg.id, { end: t })
 }
 
-// 窗口级快捷键（方向键 / 空格 / 逐帧在 VideoPlayer 里）
+// 方向键微调播放头：浏览器里 video 的 currentTime 要等 seek 完成/timeupdate 才更新，
+// 长按连发时若以 store.currentTime 为基准会丢步，所以连续按键期间以上一次目标时间为基准。
+let nudgeTarget = 0, nudgeAt = 0
+function nudge(direction, fast) {
+  const base = performance.now() - nudgeAt < 600 ? nudgeTarget : store.currentTime
+  const step = editStep.value * (fast ? 10 : 1) * direction
+  nudgeTarget = +Math.max(0, Math.min(duration.value, base + step)).toFixed(3)
+  nudgeAt = performance.now()
+  store.requestSeek(nudgeTarget, false)
+}
+
+function isTyping(el) {
+  if (!el || !el.tagName) return false
+  if (el.isContentEditable) return true
+  const tag = el.tagName
+  if (tag === 'TEXTAREA' || tag === 'SELECT') return true
+  return tag === 'INPUT' && !['checkbox', 'radio', 'button'].includes(el.type)
+}
+
+// 全局监听（捕获阶段）：不必先点时间轴获得焦点；同时拦住 video.js 自带的 5 秒跳转和页面滚动
+function onGlobalArrow(event) {
+  if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
+  if (isTyping(event.target) || !store.video || store.panel) return
+  event.preventDefault()
+  event.stopPropagation()
+  nudge(event.key === 'ArrowLeft' ? -1 : 1, event.shiftKey)
+}
+
 function onKeydown(event) {
-  if (!store.video || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return
-  if (event.target?.closest?.('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return
+  if (event.target.tagName === 'INPUT') return
   const key = event.key.toLowerCase()
   if (key === 'i') setEdge('start', store.currentTime)
   else if (key === 'o') setEdge('end', store.currentTime)
   else if (key === 'delete') removeFocused()
   else if (key === 'n') addHere()
-  else return
-  event.preventDefault()
 }
 
+onMounted(() => window.addEventListener('keydown', onGlobalArrow, true))
 watch(() => store.video?.upload_id, () => { focusedId.value = null })
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); endDrag() })
+onBeforeUnmount(() => { endDrag(); window.removeEventListener('keydown', onGlobalArrow, true) })
 </script>
 
 <template>
@@ -159,7 +184,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); endDra
       </div>
     </div>
 
-    <div ref="scrollerEl" class="timeline-scroller" tabindex="0" @wheel.ctrl.prevent="onZoomWheel">
+    <div ref="scrollerEl" class="timeline-scroller" tabindex="0" @wheel.ctrl.prevent="onZoomWheel" @keydown="onKeydown">
       <div ref="trackEl" class="track" :style="canvasStyle" @click="seekToTrack">
         <div class="ruler" aria-hidden="true">
           <span v-for="tick in rulerTicks" :key="tick.time" class="tick" :style="{ left: tick.left + '%' }"><i></i><em>{{ fmtTime(tick.time) }}</em></span>
@@ -197,7 +222,7 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKeydown); endDra
     <p v-else class="tips muted">
       <template v-if="!segments.length">还没有片段。把播放头移到想剪的位置，点「在当前位置建片段」。</template>
       <template v-else>点片段选中它，拖两端调整范围、拖中间整体移动。</template>
-      快捷键：空格 播放/暂停 · ← → 移动 1 秒（Shift 5 秒）· , . 逐帧 · N 建片段 · I / O 设入点 / 出点 · Delete 删除片段 · Ctrl + 滚轮缩放
+      快捷键（先点一下时间轴）：N 建片段 · I / O 把入点 / 出点设到播放头 · ← → 微移播放头 · , . 逐帧 · 空格 播放/暂停 · Delete 删除片段 · Ctrl + 滚轮缩放
     </p>
   </div>
 </template>
