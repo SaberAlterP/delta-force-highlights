@@ -75,10 +75,10 @@ function renderMarkers() {
   })
 }
 
-function seek(t) {
+function seek(t, play = true) {
   if (!player) return
   player.currentTime(Math.max(0, t))
-  player.play()
+  if (play) player.play()
 }
 
 // 切换当前视频时，换播放源并重画标记
@@ -88,12 +88,12 @@ watch(() => store.video?.upload_id, (id, old) => {
     player.load()
     player.one('loadedmetadata', () => {
       renderMarkers()
-      if (store.seekTo) seek(store.seekTo.t)
+      if (store.seekTo) seek(store.seekTo.t, store.seekTo.play !== false)
     })
   }
 })
 
-watch(() => store.seekTo, (v) => { if (v) seek(v.t) })
+watch(() => store.seekTo, (v) => { if (v) seek(v.t, v.play !== false) })
 watch(() => store.kills.length, () => renderMarkers())
 watch(() => store.kills.map(k => k.time).join(','), () => renderMarkers())
 
