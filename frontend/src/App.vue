@@ -23,8 +23,10 @@ watch(sidebarCollapsed, v => localStorage.setItem(LS_SIDEBAR, v ? '1' : '0'))
 
 // 两个平行的部分：自动剪素材（原有）/ 集锦剪辑（音乐卡点）
 const LS_MODE = 'df.mode'
-const mode = ref(localStorage.getItem(LS_MODE) === 'montage' ? 'montage' : 'clips')
-watch(mode, v => localStorage.setItem(LS_MODE, v))
+// 首页分成两部分：自动剪素材 / 集锦剪辑；打开时先回到首页
+const mode = ref('home')
+watch(mode, v => { if (v !== 'home') localStorage.setItem(LS_MODE, v) })
+const lastMode = localStorage.getItem(LS_MODE) === 'montage' ? 'montage' : 'clips'
 
 function onKey(e) { if (e.key === 'Escape') store.panel = '' }
 // 页面在后台标签页时不轮询，切回来立刻刷新一次
@@ -49,11 +51,12 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
 <template>
   <div class="app">
     <header class="topbar">
-      <div class="brand">
+      <div class="brand" style="cursor:pointer" title="回到首页" @click="mode = 'home'">
         <span class="mark">▲</span>
         <div><b>三角洲 · 多杀集锦</b><small>打完一局，自动剪好高光</small></div>
       </div>
       <div class="modes" role="tablist">
+        <button role="tab" :aria-selected="mode === 'home'" :class="{ on: mode === 'home' }" @click="mode = 'home'">首页</button>
         <button role="tab" :aria-selected="mode === 'clips'" :class="{ on: mode === 'clips' }" @click="mode = 'clips'">自动剪素材</button>
         <button role="tab" :aria-selected="mode === 'montage'" :class="{ on: mode === 'montage' }" @click="mode = 'montage'">集锦剪辑</button>
       </div>
@@ -77,7 +80,24 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
     <p v-if="store.workflowError" class="offline" role="alert">{{ store.workflowError }}</p>
     <p v-else-if="store.workflow?.error" class="offline" role="alert">后台提示：{{ store.workflow.error }}</p>
 
-    <main v-if="mode === 'clips'" class="layout" :class="{ narrow: sidebarCollapsed }">
+    <main v-if="mode === 'home'" class="home">
+      <h1>你想做什么？</h1>
+      <div class="cards">
+        <button class="card" :class="{ last: lastMode === 'clips' }" @click="mode = 'clips'">
+          <span class="ico">🎯</span>
+          <b>自动剪素材</b>
+          <p>打完一局自动在录像里找出「N 秒内 M 杀」的精彩片段，整理成集锦包；也可以手动建片段、调整范围再导出。</p>
+          <em>进入 →</em>
+        </button>
+        <button class="card" :class="{ last: lastMode === 'montage' }" @click="mode = 'montage'">
+          <span class="ico">🎬</span>
+          <b>集锦剪辑</b>
+          <p>把多局高光按一首歌剪成音乐卡点视频：自动分析节拍、击杀对齐重音，配转场、开头结尾，可手动微调。</p>
+          <em>进入 →</em>
+        </button>
+      </div>
+    </main>
+    <main v-else-if="mode === 'clips'" class="layout" :class="{ narrow: sidebarCollapsed }">
       <GameList v-model:collapsed="sidebarCollapsed" />
       <GameDetail />
     </main>
@@ -119,6 +139,16 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
 .modes button { border: 0; padding: 5px 14px; font-size: 13px; background: transparent; color: var(--muted); border-radius: 6px; }
 .modes button.on { background: var(--panel-2); color: var(--accent); font-weight: 600; }
 nav { display: flex; gap: 6px; } nav button { font-size: 13px; padding: 7px 14px; }
+.home { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 40px 18px; }
+.home h1 { margin: 0; font-size: 26px; letter-spacing: 1px; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 340px)); gap: 20px; }
+.card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left; padding: 26px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; transition: transform .15s, border-color .15s; }
+.card:hover { transform: translateY(-3px); border-color: var(--accent); }
+.card.last { border-color: #f5a62360; }
+.card .ico { font-size: 34px; } .card b { font-size: 19px; }
+.card p { margin: 0; font-size: 13px; line-height: 1.8; color: var(--muted); }
+.card em { margin-top: auto; font-style: normal; color: var(--accent); font-size: 13px; }
+@media (max-width: 760px) { .cards { grid-template-columns: 1fr; } }
 .offline { margin: 10px 18px 0; padding: 8px 12px; font-size: 12px; color: #f0a6a8; background: #2a1718; border: 1px solid #46282b; border-radius: 6px; }
 .layout { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: start; }
 .layout.narrow { grid-template-columns: 64px minmax(0, 1fr); }
