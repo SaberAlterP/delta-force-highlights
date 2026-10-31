@@ -35,15 +35,20 @@ DEFAULTS = {
         "chain_max_gap": 20.0,     # 同一镜头里两次击杀的素材间隔超过这个就换镜头（None = 不限）
         "accent_bonus": 0.3,       # 后续击杀落在重音（而非普通拍）上的偏好权重
         "tail": 1.2,               # 最后一次击杀后至少再放多久（之后切在拍点上）
-        "transition": "cut",       # 镜头之间默认转场：cut / push / impact
+        "transition": "cut",       # 镜头之间默认转场：cut / push / impact / flash / dip / whip
         "transition_every": 0,     # 每隔几个切点用一次上面的转场（0 = 全部硬切）
     },
     "render": {
         "hq": False,               # True：非 1x 段先补帧（慢很多，画面更顺）
         "preset": "veryfast",      # x264 preset（hq 时自动用 medium）
         "crf": 17,
-        "opening": "fade_blur",    # 开头：fade_blur / none
-        "fade_out": 1.5,
+        "opening": "fade_blur",    # 开头：fade_blur / flash / zoom / none
+        "title": "",               # 片头标题文字（空 = 不加）
+        "font": None,              # 标题字体文件；None = 自动找微软雅黑等
+        "ending": "fade",          # 结尾：fade（渐黑）/ blur（模糊后渐黑）/ none
+        "fade_out": 1.5,           # 结尾效果时长
+        "intro_video": None,       # 自定义片头视频（接在成片前面，可选）
+        "outro_video": None,       # 自定义片尾视频（接在成片后面，可选）
         "ff_blur": 4.0,            # 快进段额外模糊（>=2.5x 时）
         "game_volume": 0.85,       # 游戏声相对音乐的混音权重
         "music_volume": 0.9,

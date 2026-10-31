@@ -1,7 +1,8 @@
 # montage · 音乐卡点剪辑（独立模块）
 
 把集锦包里的高光按一首歌自动剪成卡点片：击杀开枪落在歌最重的重音上，镜头切在拍点上，长时间无击杀自动快进。
-不依赖 backend，可单独用命令行 / Python 调用；以后由后端包一层 API、agent 用 `tools.json` 调用。
+不依赖 backend，可单独用命令行 / Python 调用；网页「集锦剪辑」由 `backend/app/services/montage_studio.py` 包了一层，剪辑助手的工具在 `montage_agent.py`。
+素材也可以是任意视频：`kills.from_files(文件列表, cfg, manual={文件: [开枪帧秒数]})`。
 
 依赖：ffmpeg（PATH）、numpy、librosa。歌曲用 mp3/flac/wav（网易云 .ncm 是加密格式，需自行转换）。
 
@@ -30,7 +31,10 @@ python -X utf8 -m montage render  --work W --out 成片.mp4
 | `plan.speed_min` / `speed_max` | 1.0 / 1.35 | 两次击杀间的变速范围（1.0 = 不慢放） |
 | `plan.ff_speed_max` | 4.0 | 快进最高倍速；结构：原速 → 匀速快进 → 平滑减速 → 原速 |
 | `plan.first_lead` / `lead` | 9~18s / 4~9s | 击杀前留的前因 |
-| `plan.transition` + `transition_every` | cut / 0 | 每隔几个切点用一次 push / impact 转场 |
+| `plan.transition` + `transition_every` | cut / 0 | 每隔几个切点用一次 push / impact / flash / dip / whip 转场 |
+| `render.opening` / `title` | fade_blur / 空 | 开头：fade_blur / zoom / flash / none，可加标题文字 |
+| `render.ending` / `fade_out` | fade / 1.5s | 结尾：fade / blur / none |
+| `render.intro_video` / `outro_video` | 无 | 自定义片头 / 片尾视频，接在成片前后 |
 | `kills.av_offset` | 0.12s | 录像声音比画面晚多少 |
 
 ## timeline.json

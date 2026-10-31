@@ -1,9 +1,12 @@
 """Cancellation tests for cache force-cleanup job coordination."""
 from concurrent.futures import CancelledError
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Event
 from unittest import TestCase
 
 from app.services.jobs import JobManager
+from app.services.workers import failure_reason
 
 
 class JobCancellationTests(TestCase):
@@ -30,3 +33,15 @@ class JobCancellationTests(TestCase):
 if __name__ == "__main__":
     import unittest
     unittest.main()
+
+
+class WorkerFailureReasonTests(TestCase):
+    def test_missing_ocr_dependency_gets_install_hint(self):
+        with TemporaryDirectory() as tmp:
+            log = Path(tmp) / 'worker.log'
+            log.write_text('Traceback (most recent call last):\n  ...\nModuleNotFoundError: No module named \'easyocr\'\n\n', encoding='utf-8')
+            self.assertIn('easyocr', failure_reason(log))
+            self.assertIn('README', failure_reason(log))
+            log.write_text('Traceback\nRuntimeError: 视频无法打开\n', encoding='utf-8')
+            self.assertEqual(failure_reason(log), 'RuntimeError: 视频无法打开')
+            self.assertEqual(failure_reason(Path(tmp) / 'missing.log'), '')
