@@ -2,8 +2,10 @@
 
 Event names follow the official replay web client (2026-10-18):
 https://replay-cnprod.df.qq.com/cnprod/assets/index-BqCsiO6G.js
-The database stores event IDs, not the literal display names. Names and timestamps
-are independent of OCR; target identity still requires local visual verification.
+The database stores event IDs, not the literal display names.
+
+官方「精彩时刻」记下的击杀就是剪辑依据：每个击杀锚点算一次击杀，不再用画面识别
+核对或补充（画面识别会把人机算进去，开关背包时还会把同一条击杀信息再识别一次）。
 """
 from __future__ import annotations
 
@@ -19,7 +21,7 @@ import subprocess
 import threading
 
 
-VERSION = 'wegame-events-v1'
+VERSION = 'wegame-events-v2'
 EVENT_NAMES = {**{str(i): '击杀' for i in (1000801,1000802,1000803,1000804,
     1000822,1000842,1000843,1000844)},
     **{str(i): '摸金' for i in range(1000811,1000818)},
@@ -38,10 +40,12 @@ def nested(value, default):
     return value if isinstance(value,type(default)) else default
 
 
-def parse_record(row, recording, player_id=''):
+def parse_record(row, recording, player_id='', by_name=False):
+    """by_name=True 时只比对文件名（手动上传的录像已不在原路径）。"""
     info=row.get('gameInfo',{})
+    key=(lambda p:ntpath.basename(normalized_path(p))) if by_name else normalized_path
     videos=[v for v in row.get('videos',[]) if v.get('highLightType')==1
-            and normalized_path(v.get('videoSrc',''))==normalized_path(recording)]
+            and key(v.get('videoSrc',''))==key(recording)]
     if len(videos)!=1:return None
     if player_id and info.get('user_name')!=player_id:
         raise ValueError('官方事件所属玩家与当前游戏 ID 不符，保留原片')
@@ -75,7 +79,7 @@ def parse_record(row, recording, player_id=''):
                 identity=hashlib.sha256(json.dumps(key,ensure_ascii=False).encode()).hexdigest()[:24]
                 marks.append(dict(id='wg_'+identity,time=round(stamp,3),label=label,
                     event_name=name,event_type=kind,source='wegame',confidence=1.,
-                    confirmed=False,review_required=kind=='kill',victim_id='',
+                    confirmed=kind=='kill',review_required=False,victim_id='',
                     official_event_id=event_id,anchor_prefix=anchor.get('prefix'),
                     anchor_id=anchor.get('id'),item_name=item.get('item_name',''),
                     prompt_text=label,id_text='官方本地事件记录'))
@@ -93,70 +97,21 @@ def parse_record(row, recording, player_id=''):
     return compact
 
 
-def verification_windows(data, duration, before=2., after=5.):
-    windows=[]
-    for mark in data['marks']:
-        if mark['event_type']!='kill':continue
-        start,end=max(0.,mark['time']-before),min(duration,mark['time']+after)
-        if end<=start:continue
-        if windows and start<=windows[-1][1]:windows[-1][1]=max(windows[-1][1],end)
-        else:windows.append([start,end])
-    return windows
-
-
-def verified_marks(data, observations):
-    """Bind verified distinct targets one-to-one; never invent target identities."""
-    from .highlights import confirmed_events
-    marks=copy.deepcopy(data['marks'])
-    targets=confirmed_events(observations)
-    pairs=sorted((abs(m['time']-o['time']),i,j)
-        for i,m in enumerate(marks) if m['event_type']=='kill'
-        for j,o in enumerate(targets) if abs(m['time']-o['time'])<=7.)
-    used_marks=set();used_targets=set()
-    for _,i,j in pairs:
-        if i in used_marks or j in used_targets:continue
-        used_marks.add(i);used_targets.add(j)
-        mark,observed=marks[i],targets[j]
-        mark.update(confirmed=True,review_required=False,victim_id=observed['victim_id'],
-            confidence=observed.get('confidence',.9),id_text=observed.get('id_text',''),
-            verification_time=observed['time'],verification_source=observed.get('source','feed'))
-    return marks
-
-
-def needs_full_scan(data):
-    """精彩时刻只记录部分击杀；结算击杀更多时，扫描整局补上漏记的干员击杀（人机不算）。"""
-    return data['official_kills'] is not None and data['official_kills']>data['kill_points']
-
-
-def supplement_marks(marks, observations, near=3.):
-    """把整局画面识别到、官方没记录的干员击杀补成标记。"""
-    official=[m['time'] for m in marks if m['event_type']=='kill']
-    bound={m.get('verification_time') for m in marks if m.get('verification_time') is not None}
-    merged=list(marks)
-    for observed in observations:
-        if observed.get('event_type') in {'assist','squad'} or observed['time'] in bound:continue
-        # 同一目标的 OCR 变体会连着出现几次，只补第一次。
-        if any(abs(observed['time']-t)<=near for t in official):continue
-        official.append(observed['time'])
-        merged.append(dict(observed,id='vis_'+observed['id'],event_type='kill',source='visual',event_name='击杀'))
-    merged.sort(key=lambda m:m['time'])
-    # 官方点与补充点混合后按时间重新编号。
-    number=0
-    for mark in merged:
-        if mark['event_type']!='kill':continue
-        number+=1;mark['label']=f'击杀{number}'
-    return merged
-
-
 class EventIndex:
     def __init__(self, directory=None):
         self.directory=Path(directory) if directory else default_directory()
         self._cache={};self._lock=threading.Lock()
 
-    def find(self, recording, player_id=''):
+    def find_by_name(self, filename, player_id=''):
+        """手动上传的录像：按原文件名在所有账号的精彩时刻记录里找。"""
+        name=ntpath.basename(str(filename).replace('/','\\'))
+        return self.find(name,player_id,by_name=True) if name else None
+
+    def find(self, recording, player_id='', by_name=False):
         if not self.directory.is_dir():return None
         parts=ntpath.normpath(str(recording)).split('\\')
-        account=parts[-3] if len(parts)>=3 and parts[-2].lower()=='record' and parts[-3].isdecimal() else None
+        account=(parts[-3] if not by_name and len(parts)>=3 and parts[-2].lower()=='record'
+                 and parts[-3].isdecimal() else None)
         files=[self.directory/account] if account else list(self.directory.iterdir())
         with self._lock:
             for file in files:
@@ -178,7 +133,7 @@ class EventIndex:
                         raise DatabaseBusy('官方事件数据库仍在保存；稍后重试')
                     self._cache[file]=dict(fingerprint=fingerprint,rows=data)
                 for row in self._cache[file]['rows']:
-                    found=parse_record(row,recording,player_id)
+                    found=parse_record(row,recording,player_id,by_name)
                     if found:return found
         return None
 

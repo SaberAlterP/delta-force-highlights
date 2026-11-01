@@ -4,6 +4,7 @@ from __future__ import annotations
 from concurrent.futures import CancelledError
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+import copy
 import hashlib
 import json
 import os
@@ -19,7 +20,6 @@ from .. import config
 from . import archive, exporter, video, workers, notifications, projects, wegame
 from .cache import cache
 from .jobs import jobs
-from .parameters import DetectParams
 from .highlights import confirmed_events, select_highlights
 
 
@@ -41,7 +41,7 @@ class WorkflowSettings:
     auto_clean_cache: bool = True
     notify_on_complete: bool = False
     stretch_169: bool = True
-    prefer_official_events: bool = True
+    prefer_official_events: bool = True   # 已不再使用：现在总是只用官方精彩时刻记录；保留字段以便读取旧设置
     use_gpu: bool = True
     # 什么时候处理新录像：idle = 没在玩游戏时（默认）；auto = 录完立即；manual = 只在网页里点开始
     process_mode: str = 'idle'
@@ -382,31 +382,20 @@ class WorkflowService:
             previous = json.loads(row['result']) if row['result'] else {}
             source_identity = dict(path=str(Path(row['path']).resolve()), fingerprint=row['fingerprint'])
             source_identity['digest']=before_digest
-            analysis_params=dict(player_id=settings.player_id,detector_version=config.DETECTOR_VERSION)
-            native=(wegame.index_for(settings.wegame_db_dir).find(row['path'],settings.player_id)
-                    if settings.prefer_official_events else None)
+            # 只用官方精彩时刻记录的击杀；不再做画面识别。
+            analysis_params=dict(player_id=settings.player_id,mode='official')
+            self._progress(.01,'读取官方精彩时刻的击杀记录')
+            native=self._official_events(row,settings)
             if native:
                 if abs(native['duration']-meta['duration'])>3:
                     raise ValueError('官方事件与当前录像时长不匹配，保留原片等待复核')
                 analysis_params['official_signature']=native['signature']
                 analysis_params['official_version']=wegame.VERSION
-                if wegame.needs_full_scan(native):analysis_params['kill_scan']='full'
             if previous.get('source')==source_identity and previous.get('analysis_params')==analysis_params:
                 marks=previous['marks']
-                self._progress(.94,'复用已完成的识别，应用当前集锦规则')
+                self._progress(.94,'复用已完成的结果，应用当前集锦规则')
             else:
-                if native and wegame.needs_full_scan(native):
-                    self._progress(.01,f'官方结算 {native["official_kills"]} 杀（含人机），精彩时刻只记了 '
-                                       f'{native["kill_points"]} 个，扫描整局补上漏记的干员击杀')
-                    observations=self._analyze_source(source,settings)
-                    marks=wegame.supplement_marks(wegame.verified_marks(native,observations),observations)
-                elif native:
-                    self._progress(.01,'已读取官方时刻名称与时间，仅核对击杀点附近的干员身份')
-                    observations=self._analyze_source(source,settings,
-                        scan_windows=wegame.verification_windows(native,meta['duration'])) if native['kill_points'] else []
-                    marks=wegame.verified_marks(native,observations)
-                else:
-                    marks = self._analyze_source(source, settings)
+                marks=copy.deepcopy(native['marks']) if native else []
             if self._stop.is_set():
                 raise CancelledError()
             if _fingerprint(source) != source_fp or _digest(source) != before_digest:
@@ -425,10 +414,12 @@ class WorkflowService:
                                        review_candidates=sum(bool(m.get('review_required',True)) for m in marks)))
             if native:
                 result['official_events']={k:v for k,v in native.items() if k!='marks'}
-                # 官方结算含人机；对局的击杀数与击杀标记只算干员。
+                # 集锦只按精彩时刻记下的击杀点；结算杀数另外显示。
                 result['summary'].update(official_kills=native['official_kills'],
-                    kill_points=sum(m['event_type']=='kill' for m in marks),loot_points=native['loot_points'])
+                    kill_points=sum(m.get('event_type')=='kill' for m in marks),loot_points=native['loot_points'])
                 result['official_events']['warnings']=[w for w in native['warnings'] if not w.startswith('官方结算')]
+            else:
+                result['summary']['no_official']=True
             if not highlights and not settings.organize_originals:
                 self._update(row['id'], status='no_highlights', result=json.dumps(result, ensure_ascii=False),
                              completed=time.time(), error='没有确认的多杀片段，原片保留')
@@ -499,7 +490,8 @@ class WorkflowService:
             self._update(row['id'], status=status,
                 result=json.dumps(result, ensure_ascii=False), completed=completed,
                 retained_since=retained,cleanup_after=cleanup_after, digest=before_digest,
-                error='存在低置信度候选，未计入击杀数或集锦；可在原片保留期内检查' if needs_review else None)
+                error=('没有找到这局的官方精彩时刻记录，没有自动剪辑；可在网页里手动建片段' if not native else
+                       '存在低置信度候选，未计入击杀数或集锦；可在原片保留期内检查' if needs_review else None))
             if settings.organize_originals and settings.auto_clean_cache:
                 cache.deduplicate_uploads(Path(result['original']['path']),row['archive_sha256'],
                     closed=_closed_by_recorder,busy=jobs.has_active())
@@ -564,19 +556,20 @@ class WorkflowService:
         if self._active:
             self._active = self._active | dict(progress=p, message=message)
 
-    def _analyze_source(self, source, settings, scan_windows=None):
-        return workers.analyze_isolated(source, DetectParams(player_id=settings.player_id,scan_windows=scan_windows,use_gpu=settings.use_gpu),
-                                        progress_cb=self._progress,cancel_cb=self._should_yield)
+    def _official_events(self, row, settings):
+        """这局在官方精彩时刻里的记录；没有就返回 None（不再回退到画面识别）。"""
+        return wegame.index_for(settings.wegame_db_dir).find(row['path'],settings.player_id)
 
     def _prepare_bundle(self,row,result,settings):
         root=Path(settings.output_root).resolve()
         root.mkdir(parents=True,exist_ok=True)
         summary=result['summary']
-        # 文件夹名只算干员击杀；官方结算含人机，只写进录像说明。
+        # 文件夹名按精彩时刻击杀点；结算杀数只写进录像说明。
         official=summary.get('kill_points')
         target=root/archive.bundle_name(row['path'],row['id'],
             official if official is not None else summary['confirmed_kills'],
-            summary['has_highlights'],official=official is not None)
+            summary['has_highlights'],official=official is not None,
+            missing=bool(summary.get('no_official')))
         old=Path(row['archive_dir']) if row.get('archive_dir') else None
         if old and old!=target and old.exists():
             marker=old/'归档标识.json'
@@ -651,21 +644,22 @@ class WorkflowService:
         due_text=(archive.datetime.fromtimestamp(due,archive.LOCAL_TIME).strftime('%Y-%m-%d %H:%M:%S')
                   if due else '保留，不自动清理')
         text=(f'录制时间：{result["bundle"]["recorded_at"]}\n'
-              f'全局识别：{summary["confirmed_kills"]} 杀（同一目标击倒与补杀合并；不是官方战绩）\n'
-              f'集锦条件：{summary["window_seconds"]:g} 秒内至少 2 名不同干员\n'
+              +('没有找到这局的官方精彩时刻记录，没有自动剪辑；可在网页里手动建片段。\n'
+                if summary.get('no_official') else
+                f'集锦击杀：{summary["confirmed_kills"]} 次（官方精彩时刻记录的击杀点）\n')+
+              f'集锦条件：{summary["window_seconds"]:g} 秒内至少 2 次击杀\n'
               f'是否有集锦：{"有" if summary["has_highlights"] else "无"}\n'
               f'高光片段：{len(result["files"])} 段\n'
               f'高光画幅：{"16:9 真实像素拉伸" if result.get("export_profile",{}).get("stretch_169") else "原始画幅"}；整局原片保持原始画幅。\n'
               f'原片状态：{("已手动删除" if result.get("original",{}).get("removed_by")=="user" else "已按保留期清理") if status=="deleted" else "归档在本文件夹"}\n'
               f'原片清理时间：{due_text}（UTC+08:00）\n'
-              f'低置信度候选：{summary["review_candidates"]}；未计入人数或集锦，可在七天内复核。\n'
               '导出或文件校验失败时暂停清理。需要长期保留时可在网页点击“保留这局原片”。\n'
               '高光成片长期保留。自动流程不上传，不再保存另一份整局缓存。\n')
         if result.get('official_events'):
             info=result['official_events']
-            text=(f'官方结算：{info["official_kills"]} 杀（含人机，不计入集锦）\n'
-                  f'干员击杀点：{summary.get("kill_points",info["kill_points"])} 个，摸金点 {info["loot_points"]} 个；摸金不计入多杀。\n'
-                  '时间与时刻名称直接读取本地 DB；官方漏记的干员击杀由整局画面识别补上。\n'
+            text=(f'官方结算：{info["official_kills"]} 杀（只作参考，不计入集锦）\n'
+                  f'精彩时刻击杀点：{summary.get("kill_points",info["kill_points"])} 个，摸金点 {info["loot_points"]} 个；摸金不计入多杀。\n'
+                  '时间与时刻名称直接读取本地精彩时刻记录，不做画面识别。\n'
                   +'\n'.join(info['warnings'])+'\n'+text)
         (directory/'录像说明.txt').write_text(text,encoding='utf-8')
         if not (directory/'剪辑工程.json').exists():projects.save(row,projects.load(row))
@@ -699,7 +693,7 @@ class WorkflowService:
             entry=json.loads(done[0]['result'])
             summary=entry.get('summary',{})
             stamp=archive.recording_time(done[0]['path'])[5:16].replace('T',' ')
-            body=f'{stamp}：识别 {summary.get("confirmed_kills",0)} 杀，生成 {len(entry.get("files",[]))} 段高光'
+            body=f'{stamp}：{summary.get("confirmed_kills",0)} 次击杀，生成 {len(entry.get("files",[]))} 段高光'
         else:
             body=f'{len(done)} 段录像处理完成'
             if problems:body+=f'，{problems} 段需要检查'

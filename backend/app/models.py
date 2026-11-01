@@ -36,6 +36,8 @@ class KillMark(BaseModel):
     confirmed: bool = False
     review_required: bool = True
     source: str = "prompt"
+    label: str = ""          # 官方事件名，例如「击杀2」「摸金1 · 金枝桂冠」
+    event_name: str = ""
 
 
 class VideoMeta(BaseModel):

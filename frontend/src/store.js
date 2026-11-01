@@ -354,16 +354,8 @@ export const useStore = defineStore('main', {
       if (!this.video) return
       this.analyze = { jobId: null, state: 'running', progress: 0, message: '正在启动…', error: '' }
       try {
-        const payload = {
-          upload_id: this.video.upload_id,
-          player_id: this.playerId,
-          sample_fps: this.config.sample_fps,
-          debounce_seconds: this.config.debounce_seconds,
-          id_match_ratio: this.config.id_match_ratio,
-          id_region: this._regionObj(this.regions.id_region),
-          prompt_region: this._regionObj(this.regions.prompt_region),
-          knockdown_keywords: this.config.knockdown_keywords,
-        }
+        // 只读取官方精彩时刻记录，不再做画面识别
+        const payload = { upload_id: this.video.upload_id, player_id: this.playerId }
         const { job_id } = await api.startAnalyze(payload)
         this.analyze.jobId = job_id
         await this._pollAnalyze(job_id)

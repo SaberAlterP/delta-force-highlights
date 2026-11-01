@@ -23,7 +23,6 @@ from ..models import (
 from ..services import archive, desktop, exporter, projects, video, workers
 from ..services.media import video_response
 from ..services.cache import cache
-from ..services.parameters import DetectParams
 from ..services.jobs import Job, jobs
 from ..services.workflow import workflow
 
@@ -390,28 +389,29 @@ def stream_video(upload_id: str, request: Request):
 # ----------------------------------------------------------------------------
 @router.post("/analyze", response_model=ExportResult)
 def start_analyze(req: AnalyzeRequest):
+    """手动上传的录像：按原文件名读取官方精彩时刻里的击杀记录，不做画面识别。"""
+    from ..services import wegame
     path = _find_upload_path(req.upload_id)
     if not path:
         raise HTTPException(404, "视频不存在，请先上传")
-    params = DetectParams(
-        player_id=req.player_id or "",
-        sample_fps=req.sample_fps or config.DETECT.sample_fps,
-        debounce_seconds=req.debounce_seconds or config.DETECT.debounce_seconds,
-        id_match_ratio=req.id_match_ratio or config.DETECT.id_match_ratio,
-        id_region=(req.id_region.x1, req.id_region.y1, req.id_region.x2, req.id_region.y2)
-        if req.id_region else None,
-        prompt_region=(req.prompt_region.x1, req.prompt_region.y1,
-                       req.prompt_region.x2, req.prompt_region.y2)
-        if req.prompt_region else None,
-        knockdown_keywords=req.knockdown_keywords or None,
-    )
+    info = UPLOADS.get(req.upload_id) or {}
+    filename = info.get("filename") or ""
+    if not filename:
+        raise HTTPException(400, "不知道这段录像的原文件名（服务重启过），请重新上传")
+    settings = workflow.settings
+    player_id = req.player_id or settings.player_id
 
     def task(job: Job):
-        def cb(p: float, msg: str):
-            job.update(progress=p, message=msg)
-        kills = workers.analyze_isolated(
-            path, params, progress_cb=cb, cancel_cb=job.is_cancelled
-        )
+        job.update(progress=.1, message="读取官方精彩时刻记录")
+        native = wegame.index_for(settings.wegame_db_dir).find_by_name(filename, player_id)
+        if not native:
+            raise RuntimeError(f"官方精彩时刻里没有「{filename}」的记录。请上传 WeGame 录像文件夹里原文件名的录像，"
+                               "或者直接在时间轴上手动建片段")
+        duration = (info.get("meta") or {}).get("duration") or 0
+        if duration and abs(native["duration"]-duration) > 3:
+            raise RuntimeError("官方记录的录像时长和这段视频对不上，可能不是同一局")
+        kills = native["marks"]
+        job.update(progress=1, message=f"官方记录：{native['kill_points']} 次击杀，{native['loot_points']} 次摸金")
         return {"kills": kills}
 
     job = jobs.submit("analyze", task)

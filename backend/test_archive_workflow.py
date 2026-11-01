@@ -6,8 +6,15 @@ import time
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.services import archive
+from app.services import archive, wegame
 from app.services.workflow import WorkflowService
+
+
+def official(marks,total=None):
+    kills=sum(m.get('event_type')=='kill' for m in marks)
+    return dict(marks=marks,official_kills=kills if total is None else total,kill_points=kills,
+        loot_points=sum(m.get('event_type')=='loot' for m in marks),duration=300,
+        signature=str([m['time'] for m in marks]),version=wegame.VERSION,warnings=[])
 
 
 class ArchiveWorkflowTests(TestCase):
@@ -18,7 +25,7 @@ class ArchiveWorkflowTests(TestCase):
         self.service=WorkflowService(self.root/'state')
         self.service.configure(dict(enabled=True,player_id='tester',watch_root=str(self.watch),output_root=str(self.out),
             organize_originals=True,window_seconds=90,delete_after_retention=True,
-            auto_clean_cache=False,notify_on_complete=False,stretch_169=False,prefer_official_events=False))
+            auto_clean_cache=False,notify_on_complete=False,stretch_169=False))
         self.service.discover(now=100)
         self.source=self.watch/'record20261018-201500.mp4';self.source.write_bytes(b'original-movie')
         self.service.discover(now=200)
@@ -30,12 +37,12 @@ class ArchiveWorkflowTests(TestCase):
 
     def run_job(self,times=(30,110),retry=False,review=False):
         if retry:self.service.retry(self.row['id'])
-        marks=[dict(id=str(t),time=t,victim_id=f'enemy{i}',event_type='down',confirmed=True,
-                    review_required=False) for i,t in enumerate(times)]
+        marks=[dict(id=f'wg{i}',time=t,label=f'击杀{i+1}',event_name='击杀',event_type='kill',confirmed=True,
+                    review_required=False,victim_id='',source='wegame') for i,t in enumerate(times)]
         if review:marks.append(dict(id='unknown',time=150,victim_id='',confirmed=False,review_required=True))
         def cut(src,start,end,out,**kwargs):
             self.assertTrue(src.exists());out.write_bytes(f'clip:{start}-{end}'.encode())
-        with (patch.object(self.service,'_analyze_source',return_value=marks),
+        with (patch.object(self.service,'_official_events',return_value=official(marks)),
               patch('app.services.workflow.video.probe',return_value=dict(duration=300,
                     width=160 if self.service.settings.stretch_169 else 100,
                     height=90 if self.service.settings.stretch_169 else 100)),
@@ -51,7 +58,7 @@ class ArchiveWorkflowTests(TestCase):
         row,calls=self.run_job()
         self.assertEqual(calls,1)
         directory=Path(row['archive_dir'])
-        self.assertIn('2026-10-18_20-15-00_全局识别2杀_有集锦',directory.name)
+        self.assertIn('2026-10-18_20-15-00_全局2杀_有集锦',directory.name)
         self.assertFalse(self.source.exists())
         self.assertEqual((directory/'整局原录像.mp4').read_bytes(),b'original-movie')
         self.assertEqual(len(list(directory.glob('*.mp4'))),2)
@@ -59,20 +66,28 @@ class ArchiveWorkflowTests(TestCase):
         self.assertTrue((directory/'录像说明.txt').exists())
 
     def test_official_event_names_timestamps_and_total_flow_into_archive(self):
-        from app.services import wegame
-        self.service.configure(dict(prefer_official_events=True))
         native=dict(marks=[dict(id='wg1',time=30,event_name='击杀',event_type='kill',label='击杀1',
-            confirmed=False,review_required=True,victim_id='',source='wegame'),
+            confirmed=True,review_required=False,victim_id='',source='wegame'),
             dict(id='wg2',time=110,event_name='击杀',event_type='kill',label='击杀2',
-            confirmed=False,review_required=True,victim_id='',source='wegame'),
+            confirmed=True,review_required=False,victim_id='',source='wegame'),
             dict(id='wg3',time=60,event_name='摸金',event_type='loot',label='摸金1 · 桂冠',
             confirmed=False,review_required=False,victim_id='',source='wegame')],
             official_kills=7,kill_points=2,loot_points=1,duration=300,
             signature='test',version=wegame.VERSION,warnings=[])
-        with patch('app.services.workflow.wegame.index.find',return_value=native):
-            row,calls=self.run_job()
-        self.assertEqual(calls,1)
-        # 官方结算 7 杀含人机；文件夹按干员击杀点命名。
+        def cut(src,start,end,out,**kwargs):out.write_bytes(b'clip')
+        with (patch('app.services.workflow.wegame.index.find',return_value=native) as find,
+              patch('app.services.workflow.video.probe',return_value=dict(duration=300,width=100,height=100)),
+              patch('app.services.workflow._closed_by_recorder',return_value=True),
+              patch('app.services.workflow.exporter.cut_clip',side_effect=cut) as cut_mock,
+              patch('app.services.workflow.workers.analyze_isolated') as visual,
+              patch.object(self.service,'verify_clip')):
+            self.service.process_next(now=time.time()+121)
+        row=self.current()
+        self.assertEqual(row['status'],'ready',row['error'])
+        find.assert_called_once()
+        visual.assert_not_called()  # 不再做画面识别
+        self.assertEqual(cut_mock.call_count,1)
+        # 结算 7 杀只作参考；文件夹按精彩时刻击杀点命名。
         self.assertIn('全局2杀_有集锦',Path(row['archive_dir']).name)
         self.assertEqual(row['result']['summary']['official_kills'],7)
         self.assertEqual(row['result']['summary']['confirmed_kills'],2)
@@ -80,10 +95,25 @@ class ArchiveWorkflowTests(TestCase):
         self.assertEqual(row['result']['highlights'][0]['end'],115)
         self.assertIn('摸金1 · 桂冠',[m['label'] for m in row['result']['marks']])
 
+    def test_missing_official_record_archives_without_visual_detection(self):
+        def cut(src,start,end,out,**kwargs):out.write_bytes(b'clip')
+        with (patch.object(self.service,'_official_events',return_value=None),
+              patch('app.services.workflow.video.probe',return_value=dict(duration=300,width=100,height=100)),
+              patch('app.services.workflow._closed_by_recorder',return_value=True),
+              patch('app.services.workflow.exporter.cut_clip',side_effect=cut) as cut_mock,
+              patch('app.services.workflow.workers.analyze_isolated') as visual):
+            self.service.process_next(now=time.time()+121)
+        row=self.current()
+        visual.assert_not_called();self.assertEqual(cut_mock.call_count,0)
+        self.assertEqual(row['status'],'no_highlights')
+        self.assertIn('无官方记录_无集锦',Path(row['archive_dir']).name)
+        self.assertIn('官方精彩时刻记录',row['error'])
+        self.assertTrue(row['result']['summary']['no_official'])
+
     def test_no_highlights_archive_is_labelled_and_original_expires_after_seven_days(self):
         row,_=self.run_job(times=())
         self.assertEqual(row['status'],'no_highlights')
-        self.assertIn('全局识别0杀_无集锦',Path(row['archive_dir']).name)
+        self.assertIn('全局0杀_无集锦',Path(row['archive_dir']).name)
         original=Path(row['archive_path'])
         self.service.cleanup_due(now=row['cleanup_after']-1);self.assertTrue(original.exists())
         with patch('app.services.workflow._closed_by_recorder',return_value=True):
@@ -135,7 +165,7 @@ class ArchiveWorkflowTests(TestCase):
         second,calls=self.run_job(times=(30,60,110),retry=True)
         self.assertEqual(calls,0)
         self.assertEqual(second['cleanup_after'],first['cleanup_after'])
-        self.assertIn('全局识别3杀',Path(second['archive_dir']).name)
+        self.assertIn('全局3杀',Path(second['archive_dir']).name)
         self.assertFalse(Path(first['archive_dir']).exists())
         self.assertEqual(len(list(self.out.rglob('*.mp4'))),2)
         self.assertTrue(Path(second['archive_path']).exists())
@@ -158,7 +188,7 @@ class ArchiveWorkflowTests(TestCase):
         marks=[dict(id=str(t),time=t,victim_id=str(t),event_type='down',confirmed=True,
                     review_required=False) for t in (30,40)]
         def fail(src,start,end,out,**kwargs):out.write_bytes(b'partial');raise RuntimeError('disk full')
-        with (patch.object(self.service,'_analyze_source',return_value=marks),
+        with (patch.object(self.service,'_official_events',return_value=official(marks)),
               patch('app.services.workflow.video.probe',return_value=dict(duration=300,width=100,height=100)),
               patch('app.services.workflow._closed_by_recorder',return_value=True),
               patch('app.services.workflow.exporter.cut_clip',side_effect=fail)):

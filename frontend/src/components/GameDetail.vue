@@ -127,8 +127,9 @@ function removeBundle() {
           <span class="eyebrow" :class="statusInfo(record).tone">{{ statusInfo(record).label }}</span>
           <h1>{{ title(record) }}</h1>
           <p v-if="summary" class="sub">
-            <b class="kills">{{ killCount(record) }}</b> {{ summary.official_kills != null ? '杀（干员）' : '杀（画面识别）' }}
-            <template v-if="result.official_events"> · 官方结算 {{ summary.official_kills }} 杀（含人机） · 核对到 {{ summary.confirmed_kills }} 名不同干员 · 摸金 {{ summary.loot_points }} 次</template>
+            <template v-if="summary.no_official">没有找到官方精彩时刻记录，没有自动剪辑，可以手动建片段</template>
+            <template v-else><b class="kills">{{ killCount(record) }}</b> {{ result.official_events ? '杀（精彩时刻）' : '杀（旧版画面识别）' }}</template>
+            <template v-if="result.official_events"> · 官方结算 {{ summary.official_kills }} 杀 · 摸金 {{ summary.loot_points }} 次</template>
             · {{ result.files.length ? `${result.files.length} 段集锦` : `没有 ${store.workflow.settings.window_seconds} 秒内 ${store.workflow.settings.min_operators} 杀的片段` }}
           </p>
           <p v-else class="sub muted">{{ record.path }}</p>
@@ -137,7 +138,7 @@ function removeBundle() {
           <button v-if="result?.bundle" class="ghost" @click="act(() => api.workflowOpenFolder(record.id))">打开文件夹</button>
           <button v-if="record.status === 'manual'" class="primary" :disabled="busy" @click="act(() => api.workflowStart([record.id]), '已开始处理')">开始处理</button>
           <button v-if="record.status === 'historical'" class="primary" :disabled="busy" @click="act(() => api.workflowRetry(record.id), '已加入处理队列，原片保留')">处理这局</button>
-          <button v-if="['error', 'review', 'no_highlights', 'ready'].includes(record.status)" class="ghost" :disabled="busy" @click="act(() => api.workflowRetry(record.id), '已重新加入队列')">重新识别</button>
+          <button v-if="['error', 'review', 'no_highlights', 'ready'].includes(record.status)" class="ghost" :disabled="busy" @click="act(() => api.workflowRetry(record.id), '已重新加入队列')">重新处理</button>
         </div>
       </header>
 
