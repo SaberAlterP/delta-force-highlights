@@ -39,9 +39,11 @@ def recording_time(path: str) -> str:
         tzinfo=LOCAL_TIME).isoformat()
 
 
-def bundle_name(path: str, record_id: str, kills: int, has_highlights: bool, *, official=False) -> str:
+def bundle_name(path: str, record_id: str, kills: int, has_highlights: bool, *, official=False,
+                missing=False) -> str:
     stamp = datetime.fromisoformat(recording_time(path)).strftime('%Y-%m-%d_%H-%M-%S')
-    return f'{stamp}_全局{"" if official else "识别"}{kills}杀_{"有集锦" if has_highlights else "无集锦"}_{record_id[:8]}'
+    count = '无官方记录' if missing else f'全局{"" if official else "识别"}{kills}杀'
+    return f'{stamp}_{count}_{"有集锦" if has_highlights else "无集锦"}_{record_id[:8]}'
 
 
 def _same_volume(source,directory):

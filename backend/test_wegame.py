@@ -25,7 +25,9 @@ class WeGameTests(TestCase):
         self.assertEqual(data['marks'][2]['label'],'摸金1 · 金枝桂冠')
         self.assertEqual(data['marks'][2]['event_type'],'loot')
         self.assertFalse(data['marks'][2]['review_required'])
-        self.assertFalse(any(m['confirmed'] or m['victim_id'] for m in data['marks']))
+        self.assertFalse(data['marks'][2]['confirmed'])
+        # 官方击杀点直接算数，不再等待画面识别核对。
+        self.assertTrue(all(m['confirmed'] and not m['review_required'] for m in data['marks'][:2]))
         self.assertTrue(data['warnings'])
 
     def test_duplicate_clip_is_deduplicated_but_two_simultaneous_anchors_survive(self):
@@ -39,40 +41,20 @@ class WeGameTests(TestCase):
         self.assertIsNotNone(wegame.parse_record(fixture(),PATH.upper().replace('\\','/'),'player'))
         with self.assertRaises(ValueError):wegame.parse_record(fixture(),PATH,'someone_else')
 
-    def test_identity_binding_is_one_to_one_and_preserves_database_timestamps(self):
+    def test_official_kills_alone_drive_highlights(self):
+        from app.services.highlights import select_highlights
         data=wegame.parse_record(fixture(),PATH,'player')
-        observations=[dict(id='target',time=31,confirmed=True,review_required=False,
-            victim_id='enemy',event_type='kill',source='feed')]
-        marks=wegame.verified_marks(data,observations)
-        self.assertEqual(sum(m['confirmed'] for m in marks),1)
-        self.assertEqual([m['time'] for m in marks],[30,30,35])
-        self.assertFalse(any(m['confirmed'] for m in data['marks']))
+        # 同一时刻两个锚点是两次击杀；摸金不算；不需要画面识别出被击杀者名字。
+        clips=select_highlights(data['marks'],300,window=90,minimum=2,pre=20,post=5)
+        self.assertEqual(len(clips),1)
+        self.assertEqual(len(clips[0]['events']),2)
+        self.assertEqual((clips[0]['start'],clips[0]['end']),(10,35))
 
-    def test_same_target_down_and_finish_do_not_create_two_people(self):
-        data=wegame.parse_record(fixture(),PATH,'player')
-        obs=[dict(id=str(t),time=t,confirmed=True,review_required=False,victim_id='same',event_type='kill')
-             for t in (30,31)]
-        self.assertEqual(sum(m['confirmed'] for m in wegame.verified_marks(data,obs)),1)
-
-    def test_verification_windows_merge_and_exclude_loot(self):
-        data=wegame.parse_record(fixture(),PATH,'player')
-        self.assertEqual(wegame.verification_windows(data,300),[[28,35]])
-        data['marks']=[m for m in data['marks'] if m['event_type']=='loot']
-        self.assertEqual(wegame.verification_windows(data,300),[])
-
-    def test_operator_kills_missing_from_highlights_are_supplemented(self):
-        data=wegame.parse_record(fixture(),PATH,'player')
-        self.assertTrue(wegame.needs_full_scan(data))
-        obs=[dict(id='near',time=31,confirmed=True,review_required=False,victim_id='a',event_type='kill'),
-             dict(id='far',time=120,confirmed=True,review_required=False,victim_id='b',event_type='down_or_kill'),
-             dict(id='help',time=200,confirmed=False,review_required=True,victim_id='',event_type='assist')]
-        marks=wegame.supplement_marks(wegame.verified_marks(data,obs),obs)
-        kills=[m for m in marks if m['event_type']=='kill']
-        self.assertEqual([m['time'] for m in kills],[30,30,120])
-        self.assertEqual([m['label'] for m in kills],['击杀1','击杀2','击杀3'])
-        self.assertEqual(kills[2]['source'],'visual')
-        data['official_kills']=data['kill_points']
-        self.assertFalse(wegame.needs_full_scan(data))
+    def test_by_name_matches_uploaded_copy_of_the_recording(self):
+        self.assertIsNone(wegame.parse_record(fixture(),r'D:\uploads\record20261018-201500.mp4','player'))
+        found=wegame.parse_record(fixture(),'record20261018-201500.mp4','player',by_name=True)
+        self.assertEqual(found['kill_points'],2)
+        self.assertIsNone(wegame.parse_record(fixture(),'other.mp4','player',by_name=True))
 
     def test_unknown_event_is_named_but_not_treated_as_kill(self):
         row=fixture();row['videos'][0]['clips'][0]['events'][0]['id']='999'

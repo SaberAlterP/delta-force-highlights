@@ -3,9 +3,20 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+from app.services import wegame
+from app.services import workflow as workflow_module
 
 from app.services.workflow import WorkflowService, _digest, _fingerprint
+
+
+def official(marks,row):
+    if marks is None:return None
+    marks=[dict(m,event_type='kill',source='wegame') for m in marks]
+    return dict(marks=marks,official_kills=len(marks),kill_points=len(marks),loot_points=0,
+        duration=workflow_module.video.probe(row['path'])['duration'],
+        signature=str([m['time'] for m in marks]),version=wegame.VERSION,warnings=[])
 
 
 class WorkflowTests(TestCase):
@@ -17,12 +28,15 @@ class WorkflowTests(TestCase):
         self.sources.mkdir(parents=True)
         self.out=self.root/'outputs';self.out.mkdir()
         self.service=WorkflowService(self.root/'state')
-        self.analysis_patch=patch.object(self.service,'_analyze_source',return_value=[])
-        self.analyze=self.analysis_patch.start()
+        # 测试里给 self.analyze 设一组击杀标记，就当作这局的官方精彩时刻记录。
+        self.analyze=MagicMock(return_value=None)
+        self.analysis_patch=patch.object(self.service,'_official_events',
+            side_effect=lambda row,settings:official(self.analyze(row,settings),row))
+        self.analysis_patch.start()
         self.service.configure(dict(watch_root=str(self.watch), output_root=str(self.out),
                                     enabled=True, player_id='tester', delete_after_retention=True,
                                     organize_originals=False,auto_clean_cache=False,notify_on_complete=False,
-                                    stretch_169=False,prefer_official_events=False))
+                                    stretch_169=False))
         self.old=self.sources/'record20260101-120000.mp4';self.old.write_bytes(b'old')
         edit=self.watch/'account'/'edit';edit.mkdir();(edit/'clip.mp4').write_bytes(b'edit')
         self.service.discover(now=100)
@@ -47,7 +61,7 @@ class WorkflowTests(TestCase):
         records=self.service.status()['records']
         self.assertEqual(len(records),1)
         self.assertEqual(records[0]['status'],'historical')
-        with patch.object(self.service,'_analyze_source') as analyze:
+        with patch.object(self.service,'_official_events') as analyze:
             self.service.process_next(now=500)
             analyze.assert_not_called()
 
@@ -57,14 +71,14 @@ class WorkflowTests(TestCase):
         records=[r for r in self.service.status()['records'] if r['path']==str(path)]
         self.assertEqual(len(records),1)
         self.assertEqual(records[0]['stable_since'],290)
-        with patch.object(self.service,'_analyze_source') as analyze:
+        with patch.object(self.service,'_official_events') as analyze:
             self.service.process_next(now=400)
             analyze.assert_not_called()
 
     def test_recorder_open_handle_blocks_analysis(self):
         self.new_file()
         with (patch('app.services.workflow._closed_by_recorder',return_value=False),
-              patch.object(self.service,'_analyze_source') as analyze):
+              patch.object(self.service,'_official_events') as analyze):
             self.service.process_next(now=500)
             analyze.assert_not_called()
 
@@ -72,9 +86,9 @@ class WorkflowTests(TestCase):
         path,row=self.new_file()
         with (patch('app.services.workflow._closed_by_recorder',return_value=True),
               patch('app.services.workflow.video.probe',return_value=dict(duration=100,width=100,height=100)),
-              patch.object(self.service,'_analyze_source',return_value=[]) as analyze):
+              patch.object(self.service,'_official_events',return_value=None) as analyze):
             self.service.process_next(now=500)
-        self.assertEqual(analyze.call_args.args[0],path)
+        self.assertEqual(analyze.call_args.args[0]['path'],str(path))
         self.assertTrue(path.exists())
         self.assertEqual(next(r for r in self.service.status()['records'] if r['id']==row['id'])['status'],'no_highlights')
         self.assertEqual(list(self.out.iterdir()),[])
@@ -116,7 +130,7 @@ class WorkflowTests(TestCase):
             raise CancelledError()
         with (patch('app.services.workflow._closed_by_recorder',return_value=True),
               patch('app.services.workflow.video.probe',return_value=dict(duration=100,width=100,height=100)),
-              patch.object(self.service,'_analyze_source',side_effect=analyze)):
+              patch.object(self.service,'_official_events',side_effect=analyze)):
             self.service.process_next(now=500)
         row=self.status_of(row)
         self.assertEqual(row['status'],'waiting')

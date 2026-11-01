@@ -8,7 +8,7 @@ export function recordedAt(r) {
 
 export function killCount(r) {
   const s = r.result?.summary
-  // 官方结算含人机，对局击杀数只算干员击杀点
+  // 对局击杀数按精彩时刻击杀点；结算杀数只作参考
   return s ? (s.kill_points ?? s.confirmed_kills) : null
 }
 
@@ -16,7 +16,7 @@ const STATUS = {
   historical: ['未处理的旧录像', ''],
   manual: ['等你开始处理', 'warn'],
   waiting: ['排队中', 'warn'],
-  processing: ['正在识别…', 'warn'],
+  processing: ['正在处理…', 'warn'],
   ready: ['有集锦', 'ok'],
   no_highlights: ['无集锦', ''],
   deleted: ['原片已删除 · 高光保留', ''],

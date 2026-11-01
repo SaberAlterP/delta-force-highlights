@@ -18,7 +18,7 @@ const MODES = [
   { value: 'manual', title: '只在我点开始时处理', desc: '新录像只登记到列表，在网页里点「开始处理」或「全部开始处理」。' },
 ]
 const KEYS = ['enabled', 'player_id', 'watch_root', 'output_root', 'window_seconds', 'min_operators', 'pre_seconds',
-  'post_seconds', 'retention_days', 'delete_after_retention', 'stretch_169', 'use_gpu', 'prefer_official_events',
+  'post_seconds', 'retention_days', 'delete_after_retention', 'stretch_169', 'use_gpu',
   'wegame_db_dir', 'notify_on_complete', 'auto_clean_cache', 'process_mode', 'pause_on_fullscreen',
   'extra_game_processes', 'idle_wait_minutes']
 
@@ -137,7 +137,7 @@ async function cleanCache() {
         <label class="field"><span>片段前留（秒）</span><input type="number" min="0" max="300" v-model.number="draft.pre_seconds" /></label>
         <label class="field"><span>片段后留（秒）</span><input type="number" min="0" max="300" v-model.number="draft.post_seconds" /></label>
       </div>
-      <p class="hint">现在：{{ draft.window_seconds }} 秒内击杀 {{ draft.min_operators }} 名及以上不同干员就剪一段，前留 {{ draft.pre_seconds }} 秒、后留 {{ draft.post_seconds }} 秒。</p>
+      <p class="hint">现在：{{ draft.window_seconds }} 秒内击杀 {{ draft.min_operators }} 次及以上就剪一段，前留 {{ draft.pre_seconds }} 秒、后留 {{ draft.post_seconds }} 秒。</p>
       <label class="check"><input type="checkbox" v-model="draft.stretch_169" /><span>集锦拉伸成 16:9<em>（4:3 拉伸玩法录的画面导出时铺满宽屏，原片不受影响）</em></span></label>
     </section>
 
@@ -148,14 +148,10 @@ async function cleanCache() {
     </section>
 
     <section>
-      <h3>识别</h3>
-      <label class="check"><input type="checkbox" v-model="draft.use_gpu" />
-        <span>使用显卡（GPU）加速识别
-          <em v-if="env">{{ env.gpu ? '✓ 检测到可用的 NVIDIA 显卡' : '✗ 没检测到可用的 CUDA 显卡，会自动改用 CPU（慢一些）' }}</em></span></label>
-      <label class="check"><input type="checkbox" v-model="draft.prefer_official_events" />
-        <span>优先使用游戏官方标注点<em>（直接读取游戏录像工具记下的击杀时间，更快更准；找不到时再看画面识别）</em></span></label>
-      <label v-if="draft.prefer_official_events" class="field">
-        <span>官方标注点数据目录</span>
+      <h3>官方击杀记录</h3>
+      <p class="muted">集锦只按 WeGame「精彩时刻」记下的击杀剪辑，不再看画面识别。找不到这局的记录时不会自动剪，可以手动建片段。</p>
+      <label class="field">
+        <span>精彩时刻数据目录</span>
         <div class="pick"><input v-model.trim="draft.wegame_db_dir" placeholder="留空 = 自动查找" /><button class="ghost" type="button" @click="pick('wegame_db_dir', '选择 wonderfulDb 文件夹')">选择…</button></div>
         <em v-if="env">
           <b :class="env.wegame.exists && env.wegame.accounts ? 'ok' : 'bad'">{{ env.wegame.exists ? (env.wegame.accounts ? `✓ 找到 ${env.wegame.accounts} 个账号的标注数据` : '✗ 目录在，但里面没有标注数据') : '✗ 没找到标注数据目录' }}</b>

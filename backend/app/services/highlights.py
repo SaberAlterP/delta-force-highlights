@@ -1,4 +1,4 @@
-"""只用已确认的不同干员，按滑动时间窗筛选多杀片段。"""
+"""按官方击杀点（旧记录里是已确认的不同干员）用滑动时间窗筛选多杀片段。"""
 from __future__ import annotations
 from .events import normalize, same_name
 
@@ -6,6 +6,11 @@ from .events import normalize, same_name
 def confirmed_events(marks: list[dict]) -> list[dict]:
     events = []
     for mark in sorted(marks, key=lambda m: m['time']):
+        if mark.get('source') == 'wegame':
+            # 官方精彩时刻的每个击杀锚点就是一次击杀，没有被击杀者名字，不再去重。
+            if mark.get('event_type') == 'kill' and mark.get('confirmed'):
+                events.append(mark)
+            continue
         victim = normalize(mark.get('victim_id', ''))
         if (not mark.get('confirmed') or mark.get('review_required', False) or not victim or
             mark.get('event_type') in {'assist', 'squad'}):
