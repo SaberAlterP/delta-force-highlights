@@ -51,6 +51,16 @@ class WorkflowTests(TestCase):
             self.service.process_next(now=500)
             analyze.assert_not_called()
 
+    def test_removed_records_never_push_old_bundles_out_of_the_list(self):
+        old_id=self.service.status()['records'][0]['id']
+        with self.service._db() as db:
+            for i in range(150):
+                db.execute('INSERT INTO recordings (id,path,fingerprint,status,discovered,stable_since) VALUES (?,?,?,?,?,?)',
+                           (f'gone{i}',f'/x/{i}.mp4',f'fp{i}','removed',1000+i,1000+i))
+        ids=[r['id'] for r in self.service.status()['records']]
+        self.assertIn(old_id,ids)
+        self.assertFalse(any(i.startswith('gone') for i in ids))
+
     def test_file_growth_restarts_stability_wait_and_keeps_one_job(self):
         path,row=self.new_file();path.write_bytes(b'new-video-more')
         self.service.discover(now=290)
