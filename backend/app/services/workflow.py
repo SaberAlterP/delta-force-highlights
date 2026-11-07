@@ -257,7 +257,8 @@ class WorkflowService:
     def status(self):
         with self._db() as db:
             records = [dict(r) for r in db.execute(
-                'SELECT * FROM recordings ORDER BY discovered DESC LIMIT 100')]
+                # 已删除的记录网页不显示，不能让它们占掉名额把旧集锦包挤出列表
+                "SELECT * FROM recordings WHERE status!='removed' ORDER BY discovered DESC")]
         for item in records:
             item['result'] = json.loads(item['result']) if item['result'] else None
             item['original_available'] = self._source_path(item).is_file() and item['status'] != 'deleted'
