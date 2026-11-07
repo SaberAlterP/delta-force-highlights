@@ -25,6 +25,7 @@ const tabs = [['all', '全部'], ['highlights', '有集锦'], ['queue', '待处�
 
 const collapsed = defineModel('collapsed', { default: false })
 const deleting = ref('')
+const batching = ref(false)
 const deleteError = ref('')
 // 原片找不到且没有集锦包的局只剩一条记录，可直接移除
 const orphan = (r) => r.status === 'missing' && !r.result?.bundle
@@ -52,6 +53,57 @@ ${r.result.bundle.path}
   finally { deleting.value = '' }
 }
 
+// -------- 批量选择与删除 --------
+const selecting = ref(false)
+const picked = ref(new Set())
+const selectable = computed(() => shown.value.filter(deletable))
+const pickedRecords = computed(() => selectable.value.filter(r => picked.value.has(r.id)))
+const allPicked = computed(() => selectable.value.length > 0 && pickedRecords.value.length === selectable.value.length)
+function toggleSelecting() {
+  selecting.value = !selecting.value
+  picked.value = new Set()
+}
+function togglePick(r) {
+  const next = new Set(picked.value)
+  next.has(r.id) ? next.delete(r.id) : next.add(r.id)
+  picked.value = next
+}
+function toggleAll() {
+  picked.value = allPicked.value ? new Set() : new Set(selectable.value.map(r => r.id))
+}
+async function removePicked() {
+  const rs = pickedRecords.value
+  if (!rs.length || batching.value) return
+  const real = rs.filter(r => !orphan(r)).length
+  const lines = rs.map(day).join('\n')
+  if (!confirm(`批量删除选中的 ${rs.length} 局？
+
+${lines}
+
+${real ? `其中 ${real} 局的整个集锦文件夹（整局原片、全部高光、手动剪辑和识别记录）都会删除，无法恢复。` : ''}${rs.length - real ? `${rs.length - real} 局只是移除记录，不删除任何文件。` : ''}`)) return
+  batching.value = true; deleteError.value = ''
+  const failed = []
+  try {
+    for (const r of rs) {
+      try {
+        store.forgetArchive(r.id, false)
+        await new Promise(res => setTimeout(res, 300))
+        await (orphan(r) ? api.workflowRemoveMissing(r.id) : api.workflowDeleteBundle(r.id))
+        if (store.selectedRecordId === r.id) store.selectedRecordId = null
+      } catch (e) {
+        failed.push(`${day(r)}：${e?.response?.data?.detail || e.message || '删除失败'}`)
+      }
+    }
+    await store.refreshWorkflow()
+  } finally {
+    batching.value = false
+    if (failed.length) {
+      deleteError.value = `${failed.length} 局删除失败：${failed.join('；')}`
+      picked.value = new Set(rs.filter(r => failed.some(f => f.startsWith(day(r)))).map(r => r.id))
+    } else toggleSelecting()
+  }
+}
+
 function day(r) {
   const t = recordedAt(r)
   return t ? `${t.slice(5, 10).replace('-', '/')} ${t.slice(11, 16)}` : '时间未知'
@@ -76,11 +128,22 @@ function day(r) {
         <button class="primary" :disabled="starting" @click="startAll">全部开始处理</button>
       </div>
       <div v-if="store.workflow?.paused" class="paused">⏸ {{ store.workflow.paused }}</div>
+      <div class="batch">
+        <button class="ghost" :disabled="batching" @click="toggleSelecting">{{ selecting ? '取消' : '批量选择' }}</button>
+        <template v-if="selecting">
+          <label class="all"><input type="checkbox" :checked="allPicked" :disabled="batching || !selectable.length" @change="toggleAll"> 全选</label>
+          <button class="danger" :disabled="batching || !pickedRecords.length" @click="removePicked">
+            {{ batching ? '删除中…' : `删除所选（${pickedRecords.length}）` }}
+          </button>
+        </template>
+      </div>
       <p v-if="deleteError" class="del-error" role="alert">{{ deleteError }}</p>
     </template>
     <div class="list">
-      <div v-for="r in shown" :key="r.id" class="game" :class="{ on: store.selectedRecordId === r.id }">
-        <button class="pick" :title="collapsed ? `${day(r)} · ${statusInfo(r).label}` : ''" @click="store.selectedRecordId = r.id">
+      <div v-for="r in shown" :key="r.id" class="game" :class="{ on: store.selectedRecordId === r.id, checked: selecting && picked.has(r.id) }">
+        <input v-if="selecting && !collapsed" type="checkbox" class="chk" :checked="picked.has(r.id)" :disabled="!deletable(r) || batching"
+               :aria-label="`选择 ${day(r)}`" @change="togglePick(r)">
+        <button class="pick" :class="{ sel: selecting && !collapsed }" :title="collapsed ? `${day(r)} · ${statusInfo(r).label}` : ''" @click="store.selectedRecordId = r.id">
           <span class="kills" :class="{ hot: r.result?.summary?.has_highlights }">{{ killCount(r) ?? '–' }}</span>
           <template v-if="!collapsed">
             <span class="meta">
@@ -91,7 +154,7 @@ function day(r) {
           </template>
           <i v-if="r.status === 'processing'" class="spin" aria-label="正在处理"></i>
         </button>
-        <button v-if="!collapsed && deletable(r)" class="danger ghost del" :disabled="!!deleting"
+        <button v-if="!collapsed && !selecting && deletable(r)" class="danger ghost del" :disabled="!!deleting"
                 :title="orphan(r) ? '移除这条记录' : '删除这一局的集锦包'" :aria-label="`${orphan(r) ? '移除' : '删除'} ${day(r)} 的${orphan(r) ? '记录' : '集锦包'}`" @click="removeBundle(r)">
           {{ deleting === r.id ? '…' : '✕' }}
         </button>
@@ -112,6 +175,13 @@ function day(r) {
 .tabs { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; }
 .fold { flex: none; padding: 4px 9px; font-size: 13px; line-height: 1.2; color: var(--muted); }
 .mini .bar { justify-content: center; padding: 10px 6px; }
+.batch { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; }
+.batch button { padding: 5px 10px; font-size: 12px; }
+.batch .all { display: flex; align-items: center; gap: 4px; color: var(--muted); margin-left: auto; cursor: pointer; }
+.batch .danger { color: var(--danger); }
+.game.checked { background: var(--panel-2); border-color: var(--danger); }
+.chk { position: absolute; left: 8px; top: 50%; margin-top: -7px; z-index: 1; }
+.pick.sel { padding-left: 30px; }
 .del-error { margin: 0; padding: 7px 10px; font-size: 11px; line-height: 1.6; color: #f0a6a8; background: #2a1718; border-bottom: 1px solid var(--border); }
 .tabs button { padding: 5px 9px; font-size: 12px; background: transparent; border-color: transparent; color: var(--muted); border-radius: 6px; }
 .tabs button.on { color: var(--text); background: var(--panel-2); border-color: var(--border); }
