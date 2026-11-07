@@ -71,9 +71,6 @@ function togglePick(r) {
 function toggleAll() {
   picked.value = allPicked.value ? new Set() : new Set(selectable.value.map(r => r.id))
 }
-function onRowClick(r) {
-  if (selecting.value) { if (deletable(r)) togglePick(r) } else store.selectedRecordId = r.id
-}
 async function removePicked() {
   const rs = pickedRecords.value
   if (!rs.length || batching.value) return
@@ -143,10 +140,10 @@ function day(r) {
       <p v-if="deleteError" class="del-error" role="alert">{{ deleteError }}</p>
     </template>
     <div class="list">
-      <div v-for="r in shown" :key="r.id" class="game" :class="{ on: store.selectedRecordId === r.id && !selecting, checked: selecting && picked.has(r.id) }">
+      <div v-for="r in shown" :key="r.id" class="game" :class="{ on: store.selectedRecordId === r.id, checked: selecting && picked.has(r.id) }">
         <input v-if="selecting && !collapsed" type="checkbox" class="chk" :checked="picked.has(r.id)" :disabled="!deletable(r) || batching"
                :aria-label="`选择 ${day(r)}`" @change="togglePick(r)">
-        <button class="pick" :class="{ sel: selecting && !collapsed }" :title="collapsed ? `${day(r)} · ${statusInfo(r).label}` : ''" @click="onRowClick(r)">
+        <button class="pick" :class="{ sel: selecting && !collapsed }" :title="collapsed ? `${day(r)} · ${statusInfo(r).label}` : ''" @click="store.selectedRecordId = r.id">
           <span class="kills" :class="{ hot: r.result?.summary?.has_highlights }">{{ killCount(r) ?? '–' }}</span>
           <template v-if="!collapsed">
             <span class="meta">
