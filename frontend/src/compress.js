@@ -33,7 +33,13 @@ let timer = null
 const busy = () => ['pending', 'running', 'cancelling'].includes(compress.state)
 export const isBusy = busy
 
-export const errText = (e, fallback = '操作失败') => e?.response?.data?.detail || e?.message || fallback
+const STALE = '后台还是旧版本，没有压缩功能：请关掉剪辑工具后重新双击「启动剪辑工具」再试'
+// 前端更新了但后端没重启时，/api/compress 会落到静态文件上，得到 405 / 404 Not Found
+export const errText = (e, fallback = '操作失败') => {
+  const status = e?.response?.status, detail = e?.response?.data?.detail
+  if (status === 405 || (status === 404 && detail === 'Not Found')) return STALE
+  return detail || e?.message || fallback
+}
 
 /** 选定要压缩的视频；正在压缩时不换（避免把进度丢掉）。 */
 export async function setSource(source, label = '') {

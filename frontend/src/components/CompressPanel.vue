@@ -10,11 +10,13 @@ const preset = ref(localStorage.getItem(LS_PRESET) || 'share')
 const targetMb = ref(Number(localStorage.getItem(LS_TARGET)) || 25)
 const picking = ref(false)
 const pickError = ref('')
+const loadError = ref('')
 watch(preset, v => localStorage.setItem(LS_PRESET, v))
 watch(targetMb, v => { if (v > 0) localStorage.setItem(LS_TARGET, String(v)) })
 
 onMounted(async () => {
-  try { const r = await capi.presets(); presets.value = r.presets; outputDir.value = r.output_dir } catch { /* 后端离线时 App 顶部会提示 */ }
+  try { const r = await capi.presets(); presets.value = r.presets; outputDir.value = r.output_dir }
+  catch (e) { loadError.value = errText(e, '读不到压缩档位，后台可能没启动') }
 })
 
 const busy = computed(() => isBusy())
@@ -37,6 +39,8 @@ function openFolder() { capi.openFolder(compress.jobId).catch(() => {}) }
 <template>
   <div class="compress">
     <p class="muted intro">把视频重新压成小文件，方便发微信 / QQ 给别人看。整局原片、高光、手动剪辑、上传的录像、集锦成片都可以压；原文件不会被改动。</p>
+
+    <p v-if="loadError" class="bad small" role="alert">{{ loadError }}</p>
 
     <!-- 1. 选视频 -->
     <section class="src">
