@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from . import config
 from .api.routes import router
 from .api.montage_routes import router as montage_router
+from .api.compress_routes import router as compress_router
 from .services.workflow import workflow
 
 app = FastAPI(title="三角洲行动 · 击杀集锦自动生成工具", version="1.0.0")
@@ -25,6 +26,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(montage_router)
+app.include_router(compress_router)
 
 
 def _hostname(value: str) -> str:

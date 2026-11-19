@@ -184,7 +184,8 @@ def scan_folder(folder: str, depth: int = 3, limit: int = 600) -> dict:
         rel_depth = len(Path(dirpath).relative_to(root).parts)
         if rel_depth >= depth:
             dirnames[:] = []
-        dirnames[:] = [d for d in dirnames if not d.startswith('.')]
+        # 「压缩视频」是压缩功能的输出，和原素材重复，不当素材
+        dirnames[:] = [d for d in dirnames if not d.startswith('.') and d != '压缩视频']
         for name in filenames:
             p = Path(dirpath) / name
             if p.suffix.lower() in VIDEO_EXT:

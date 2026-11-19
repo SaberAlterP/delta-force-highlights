@@ -8,13 +8,15 @@ import GuidePanel from './components/GuidePanel.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import AnalyzePanel from './components/AnalyzePanel.vue'
 import MontageStudio from './montage/MontageStudio.vue'
+import CompressPanel from './components/CompressPanel.vue'
+import { compress, isBusy as compressing } from './compress'
 
 const store = useStore()
 let timer
 const settings = computed(() => store.workflow?.settings)
 const ready = computed(() => settings.value && settings.value.player_id && settings.value.watch_root && settings.value.output_root)
 const queued = computed(() => (store.workflow?.records || []).filter(r => ['waiting', 'processing'].includes(r.status)).length)
-const titles = { settings: '设置', guide: '使用指南', manual: '手动识别录像' }
+const titles = { settings: '设置', guide: '使用指南', manual: '手动识别录像', compress: '压缩视频' }
 
 // 对局列表收起后把宽度让给剪辑区；记住上次的选择
 const LS_SIDEBAR = 'sidebar_collapsed'
@@ -72,6 +74,9 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
       </button>
       <span class="spacer"></span>
       <nav>
+        <button class="ghost" title="把视频压成小文件，方便发给别人" @click="store.panel = 'compress'">
+          {{ compressing() ? `压缩中 ${Math.round(compress.progress * 100)}%` : compress.state === 'done' ? '压缩视频 ✓' : '压缩视频' }}
+        </button>
         <button class="ghost" @click="store.panel = 'manual'">手动识别</button>
         <button class="ghost" @click="store.panel = 'guide'">使用指南</button>
         <button :class="ready ? 'ghost' : 'primary'" @click="store.panel = 'settings'">设置</button>
@@ -110,6 +115,7 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
           <div class="drawer-body">
             <SettingsPanel v-if="store.panel === 'settings'" />
             <GuidePanel v-else-if="store.panel === 'guide'" />
+            <CompressPanel v-else-if="store.panel === 'compress'" />
             <div v-else-if="store.panel === 'manual'" class="manual">
               <p class="muted">不在录像文件夹里的视频，可以上传到这里识别和剪辑。上传的文件只存在工具缓存里。</p>
               <UploadPanel />

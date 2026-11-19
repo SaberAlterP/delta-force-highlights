@@ -2,8 +2,16 @@
 import { computed, ref } from 'vue'
 import { useMontage } from './store'
 import { mapi, errText } from './api'
+import { useStore } from '../store'
+import { setSource as setCompressSource } from '../compress'
 
 const m = useMontage()
+const mainStore = useStore()
+// 成片交给顶部的「压缩视频」面板
+async function compressRender(r) {
+  await setCompressSource({ kind: 'montage', path: r.path }, r.name)
+  mainStore.panel = 'compress'
+}
 const songInput = ref(null)
 const bumperBusy = ref('')
 const advanced = ref(false)
@@ -163,6 +171,7 @@ function rename(v) { if (v.trim()) { m.project.name = v.trim(); m.patch({ name: 
       <ul v-if="m.project.renders?.length" class="renders">
         <li v-for="r in m.project.renders.slice(0, 5)" :key="r.path">
           <a :href="mapi.fileUrl(r.path)" target="_blank" :title="r.path">{{ r.name }}</a><span class="muted">{{ r.duration.toFixed(1) }}s</span>
+          <button class="ghost tiny" title="压成小文件，方便发给别人" @click="compressRender(r)">压缩</button>
         </li>
       </ul>
     </section>
@@ -195,5 +204,5 @@ h3 { margin: 0; font-size: 12px; color: var(--accent-2); display: flex; align-it
 .upload.busy { opacity: .5; pointer-events: none; }
 .actions button:not(.tiny) { width: 100%; }
 .renders { margin: 4px 0 0; padding: 0; list-style: none; font-size: 11px; display: flex; flex-direction: column; gap: 3px; }
-.renders li { display: flex; gap: 6px; justify-content: space-between; } .renders a { color: #9ad1ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.renders li { display: flex; gap: 6px; justify-content: space-between; align-items: center; } .renders li > a { flex: 1; min-width: 0; } .renders a { color: #9ad1ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 </style>
