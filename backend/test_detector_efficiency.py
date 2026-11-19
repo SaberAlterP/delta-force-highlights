@@ -1,4 +1,5 @@
 """Regression tests for the adaptive OCR detection pipeline."""
+import tempfile
 from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
@@ -51,8 +52,23 @@ class _FakeCapture:
 
 class DetectorEfficiencyTests(TestCase):
     def test_unicode_path_templates_are_decoded(self):
-        detector._id_template_cache = None
-        self.assertEqual(len(detector._load_id_templates()), 2)
+        # 用临时的中文路径模板，不依赖本机私有的 assets/id_templates。
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "玩家模板"
+            folder.mkdir()
+            row = np.full((24, 260, 3), 40, dtype=np.uint8)
+            for name in ("模板一.png", "模板二.png"):
+                ok, encoded = cv2.imencode(".png", row)
+                self.assertTrue(ok)
+                encoded.tofile(str(folder / name))
+            detector._id_template_cache = None
+            try:
+                with patch.object(config, "ID_TEMPLATE_DIR", folder):
+                    templates = detector._load_id_templates()
+            finally:
+                detector._id_template_cache = None
+        self.assertEqual(len(templates), 2)
+        self.assertEqual(templates[0].shape[1], 180)
 
     def test_default_coarse_scan_restores_stable_three_fps_baseline(self):
         self.assertEqual(config.DETECT.sample_fps, 3.0)

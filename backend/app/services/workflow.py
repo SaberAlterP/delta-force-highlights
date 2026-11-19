@@ -971,9 +971,14 @@ class WorkflowService:
             allow=row['allow_cleanup'] if row['archive_path'] else 0
             previous=json.loads(row['result']) if row['result'] else None
             if previous:previous.pop('analysis_params',None)
+            # 文件和上次看到的一样（旧录像、已归档原片）就不必再等「写入完成」计时，下一轮直接处理；
+            # 变过的才重新计时。process_next 处理前仍会再核对一次指纹。
+            fingerprint=values.get('fingerprint',row['fingerprint'])
+            now=time.time()
+            stable_since=now-self.settings.stable_seconds if fingerprint==row['fingerprint'] else now
             db.execute("UPDATE recordings SET status='waiting', fingerprint=?, stable_since=?, "
                        'allow_cleanup=?, result=?, error=NULL WHERE id=?',
-                       (values.get('fingerprint',row['fingerprint']), time.time(),allow,
+                       (fingerprint, stable_since,allow,
                         json.dumps(previous,ensure_ascii=False) if previous else None,record_id))
 
     def start(self):

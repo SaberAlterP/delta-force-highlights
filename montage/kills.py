@@ -63,6 +63,45 @@ def from_archive(root, cfg):
     return clips
 
 
+def _bundle_marks(d, cfg, cache):
+    if d not in cache:
+        rec = os.path.join(d, '识别记录.json')
+        marks = []
+        if os.path.isfile(rec):
+            r = json.load(open(rec, encoding='utf-8'))
+            marks = [m for m in r.get('marks', []) if m.get('event_type') == 'kill'
+                     and (m.get('confirmed') or not cfg['only_confirmed'])]
+        cache[d] = marks
+    return cache[d]
+
+
+def from_files(files, cfg, manual=None, durations=None):
+    """任意挑选的素材文件。集锦包里的高光 / 整局原片自动读识别记录；
+    manual = {文件: [开枪帧秒数...]} 手动标的击杀（优先）。没有击杀的文件跳过。"""
+    manual, durations, cache = manual or {}, durations or {}, {}
+    clips = []
+    for f in files:
+        dur = durations.get(f)
+        if f in manual and manual[f]:
+            ks, source = sorted(float(k) for k in manual[f]), 'manual'
+        else:
+            base = os.path.basename(f)
+            m = re.search(r'_高光_([\d.]+)-([\d.]+)s', base)
+            if m:
+                a, b = float(m.group(1)), float(m.group(2))
+            elif base.startswith('整局原录像') and dur:
+                a, b = 0.0, dur
+            else:
+                continue
+            ks = [shot_time(f, mk['verification_time'] - a, cfg) for mk in _bundle_marks(os.path.dirname(f), cfg, cache)
+                  if mk.get('verification_time') is not None and a + 0.5 <= mk['verification_time'] <= b]
+            ks, source, dur = sorted(ks), 'archive', dur or round(b - a, 3)
+        ks = [k for i, k in enumerate(ks) if i == 0 or k - ks[i - 1] > cfg['merge_within']]
+        if ks and dur:
+            clips.append(dict(file=f, dur=round(dur, 3), kills=ks, source=source))
+    return clips
+
+
 def save(clips, path):
     json.dump(clips, open(path, 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 

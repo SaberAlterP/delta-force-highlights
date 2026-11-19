@@ -8,6 +8,7 @@ import ClipTimeline from './ClipTimeline.vue'
 import KillList from './KillList.vue'
 import ExportPanel from './ExportPanel.vue'
 import LoadingVeil from './LoadingVeil.vue'
+import { setSource as setCompressSource } from '../compress'
 
 const store = useStore()
 const busy = ref(false)
@@ -100,7 +101,25 @@ function removeManual(job, f) {
 }
 function playManual(job, f) {
   manualLoading.value = true
-  manualPlay.value = { name: f.name, src: api.workflowManualFileUrl(record.value.id, job.id, f.name) }
+  manualPlay.value = { name: f.name, exportId: job.id, src: api.workflowManualFileUrl(record.value.id, job.id, f.name) }
+}
+
+// 正在看的那个视频（整局原片 / 高光 / 手动剪辑 / 上传的录像）交给压缩面板
+const compressTarget = computed(() => {
+  const r = record.value
+  if (r && manualPlay.value) return { source: { kind: 'manual', record_id: r.id, export_id: manualPlay.value.exportId, name: manualPlay.value.name }, label: `${title(r)} · ${manualPlay.value.name}` }
+  if (r && editingThis.value) {
+    const s = sources.value.find(x => x.key === store.video.upload_id)
+    if (s) return { source: s.index === null ? { kind: 'original', record_id: r.id } : { kind: 'highlight', record_id: r.id, index: s.index }, label: `${title(r)} · ${s.label}` }
+  }
+  if (!r && manualVideo.value) return { source: { kind: 'upload', upload_id: store.video.upload_id }, label: store.video.filename }
+  return null
+})
+async function compressCurrent() {
+  const t = compressTarget.value
+  if (!t) return
+  await setCompressSource(t.source, t.label)
+  store.panel = 'compress'
 }
 function removeBundle() {
   if (!confirm(`删除这一局的整个集锦文件夹？\n\n${result.value.bundle.path}\n\n里面的整局原片、全部高光、手动剪辑和识别记录都会删除，无法恢复。`)) return
@@ -118,7 +137,10 @@ function removeBundle() {
         <h1>{{ store.video.filename }}</h1>
         <p class="sub">上传的录像只在本工具缓存里，七天未使用会自动清理。</p>
       </div>
-      <button class="ghost" @click="store.panel = 'manual'">换一段录像</button>
+      <div class="head-actions">
+        <button v-if="compressTarget" class="ghost" title="压成小文件，方便发给别人" @click="compressCurrent">压缩这个视频</button>
+        <button class="ghost" @click="store.panel = 'manual'">换一段录像</button>
+      </div>
     </header>
 
     <template v-else-if="record">
@@ -134,6 +156,7 @@ function removeBundle() {
           <p v-else class="sub muted">{{ record.path }}</p>
         </div>
         <div class="head-actions">
+          <button v-if="compressTarget" class="ghost" title="把正在看的这个视频压成小文件，方便发给别人" @click="compressCurrent">压缩这个视频</button>
           <button v-if="result?.bundle" class="ghost" @click="act(() => api.workflowOpenFolder(record.id))">打开文件夹</button>
           <button v-if="record.status === 'manual'" class="primary" :disabled="busy" @click="act(() => api.workflowStart([record.id]), '已开始处理')">开始处理</button>
           <button v-if="record.status === 'historical'" class="primary" :disabled="busy" @click="act(() => api.workflowRetry(record.id), '已加入处理队列，原片保留')">处理这局</button>

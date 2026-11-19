@@ -50,9 +50,26 @@ onMounted(() => {
   player.on('loadedmetadata', renderMarkers)
   for (const name of ['loadstart', 'waiting', 'seeking']) player.on(name, () => setBuffering(true))
   for (const name of ['canplay', 'playing', 'seeked', 'loadeddata', 'error']) player.on(name, () => setBuffering(false))
+  window.addEventListener('keydown', onPlayKey)
 })
 
-onBeforeUnmount(() => { clearTimeout(veilTimer); if (player) player.dispose() })
+onBeforeUnmount(() => { window.removeEventListener('keydown', onPlayKey); clearTimeout(veilTimer); if (player) player.dispose() })
+
+// 方向键在时间轴里处理；这里补逐帧（, .）和空格 / K 播放暂停
+function onPlayKey(e) {
+  if (!player || e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || store.panel) return
+  if (e.target?.closest?.('input, textarea, select, [contenteditable="true"]')) return
+  if (e.key === ',' || e.key === '.') {
+    e.preventDefault()
+    player.pause()
+    const t = Math.max(0, Math.min(player.duration() || duration.value, player.currentTime() + (e.key === ',' ? -1 : 1) / 60))
+    player.currentTime(t)
+    currentTime.value = store.currentTime = t
+  } else if ((e.key === ' ' || e.key.toLowerCase() === 'k') && !e.target?.closest?.('button')) {
+    e.preventDefault()
+    player.paused() ? player.play() : player.pause()
+  }
+}
 
 function renderMarkers() {
   if (!player) return
@@ -75,10 +92,10 @@ function renderMarkers() {
   })
 }
 
-function seek(t) {
+function seek(t, play = true) {
   if (!player) return
   player.currentTime(Math.max(0, t))
-  player.play()
+  if (play) player.play()
 }
 
 // 切换当前视频时，换播放源并重画标记
@@ -88,16 +105,14 @@ watch(() => store.video?.upload_id, (id, old) => {
     player.load()
     player.one('loadedmetadata', () => {
       renderMarkers()
-      if (store.seekTo) seek(store.seekTo.t)
+      if (store.seekTo) seek(store.seekTo.t, store.seekTo.play !== false)
     })
   }
 })
 
-watch(() => store.seekTo, (v) => { if (v) seek(v.t) })
+watch(() => store.seekTo, (v) => { if (v) seek(v.t, v.play !== false) })
 watch(() => store.kills.length, () => renderMarkers())
 watch(() => store.kills.map(k => k.time).join(','), () => renderMarkers())
-
-function addSegmentHere() { store.addSegmentAt(currentTime.value) }
 
 // 区域叠加（百分比）
 function boxStyle(region) {
@@ -131,8 +146,6 @@ function boxStyle(region) {
     <div class="row controls">
       <span class="time muted">{{ fmtTime(currentTime) }} / {{ fmtTime(duration) }}</span>
       <span v-if="stretchPreview" class="preview-mode">4:3 → 16:9 拉伸预览</span>
-      <span class="spacer"></span>
-      <button class="primary" @click="addSegmentHere">＋ 在当前位置建片段</button>
     </div>
   </div>
 </template>

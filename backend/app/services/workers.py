@@ -19,6 +19,20 @@ def active_directories():
     return tuple(_active_directories)
 
 
+def failure_reason(log_path):
+    """从识别子进程日志里取出最后一行错误，缺依赖时给出能照做的提示。"""
+    try:
+        lines=[line.strip() for line in Path(log_path).read_text(encoding='utf-8',errors='replace').splitlines()]
+    except OSError:
+        return ''
+    last=next((line for line in reversed(lines) if line),'')
+    if last.startswith('ModuleNotFoundError'):
+        module=last.split("'")[1] if last.count("'")>=2 else ''
+        hint='先装 PyTorch，再装 requirements.txt' if module in ('easyocr','torch','torchvision') else '运行 pip install -r requirements.txt'
+        return f'缺少 Python 组件 {module or "（见日志）"}，请按 README「安装」一节{hint}'
+    return last[:300]
+
+
 def analyze_isolated(source, params, progress_cb=None, cancel_cb=None):
     # 手动识别和监控队列共用单槽，避免多个 CUDA 模型挤占显存。
     while not _analysis_lock.acquire(timeout=.25):
@@ -51,7 +65,9 @@ def analyze_isolated(source, params, progress_cb=None, cancel_cb=None):
                             pass
                     threading.Event().wait(.25)
                 if proc.returncode != 0 or not result.is_file():
-                    raise RuntimeError(f'录像识别失败，诊断日志：{directory / "worker.log"}')
+                    log.flush()
+                    reason=failure_reason(directory/'worker.log')
+                    raise RuntimeError(f'录像识别失败{"：" + reason if reason else ""}。诊断日志：{directory / "worker.log"}')
                 if cancel_cb and cancel_cb():
                     raise CancelledError()
                 return json.loads(result.read_text(encoding='utf-8'))

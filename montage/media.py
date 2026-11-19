@@ -1,12 +1,26 @@
 """ffmpeg 小工具 + 亚像素缩放。"""
 import os
+import re
 import subprocess
 
 FPS = 60
 MI = 'minterpolate=fps=240:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1'
 
 
+_major = []
+
+
+def ffmpeg_major():
+    if not _major:
+        out = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True).stdout
+        m = re.match(r'ffmpeg version n?(\d+)', out)
+        _major.append(int(m.group(1)) if m else 7)
+    return _major[0]
+
+
 def run(args):
+    if ffmpeg_major() < 7:     # 老版本没有 -/option 读文件的写法
+        args = ['-filter_complex_script' if a == '-/filter_complex' else a for a in args]
     subprocess.run(['ffmpeg', '-v', 'error', '-y'] + args, check=True)
 
 
@@ -18,6 +32,11 @@ def frames(path):
 def duration(path):
     return float(subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path],
                                 capture_output=True, text=True).stdout)
+
+
+def has_audio(path):
+    return bool(subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index',
+                                '-of', 'csv=p=0', path], capture_output=True, text=True).stdout.strip())
 
 
 def persp(Z, rate, dx='0', dy='0'):

@@ -2,7 +2,7 @@
 import json
 import os
 
-from .media import FPS, MI, frames, persp, run
+from .media import FPS, MI, duration as media_duration, frames, has_audio, persp, run
 from .planner import seg_out
 
 
@@ -16,8 +16,62 @@ HEADS = {
     'impact': (0.6, persp("1+0.2*pow(max(0,1-T/0.35),2)+0.05*exp(-8*T)", 60,
                           dx="40*exp(-8*T)*sin(70*T)", dy="30*exp(-8*T)*cos(55*T)")
                + ",eq=brightness='0.6*pow(max(0,1-t/0.15),2)':eval=frame"),
+    'flash': (0.35, "eq=brightness='0.75*pow(max(0,1-t/0.3),2)':eval=frame"),
+    'dip': (0.3, "eq=brightness='-pow(max(0,1-t/0.3),2)':eval=frame"),
+    'whip': (0.3, _mblur(persp("1.04", 240, dx="-0.3*W*pow(max(0,1-T/0.3),3)"))),
 }
-TAIL_PUSH = (0.25, _mblur(persp("1+0.5*pow(T/0.25,3)", 240)))
+# 上一镜头结尾配合下一镜头的入场
+TAILS = {
+    'push': (0.25, _mblur(persp("1+0.5*pow(T/0.25,3)", 240))),
+    'dip': (0.2, "eq=brightness='-pow(t/0.2,2)':eval=frame"),
+    'whip': (0.2, _mblur(persp("1.04", 240, dx="0.3*W*pow(T/0.2,3)"))),
+}
+TRANSITIONS = ['cut'] + list(HEADS)
+OPENINGS = ['fade_blur', 'flash', 'zoom', 'none']
+ENDINGS = ['fade', 'blur', 'none']
+FONTS = ['C:/Windows/Fonts/msyhbd.ttc', 'C:/Windows/Fonts/msyh.ttc', 'C:/Windows/Fonts/simhei.ttf',
+         '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf']
+
+
+def _opening(kind):
+    if kind == 'fade_blur':
+        return (f",split=2[o1][o2];[o2]scale=480:-2,gblur=sigma=10,scale=1920:1080[ob];"
+                f"[o1][ob]blend=all_expr='A*min(1,T/1.2)+B*max(0,1-T/1.2)',{persp('1+0.15*pow(max(0,1-T/1.6),2)', 60)},"
+                "eq=brightness='-0.9*pow(max(0,1-t/1.0),2)':eval=frame")
+    if kind == 'flash':
+        return ",eq=brightness='pow(max(0,1-t/0.6),2)':eval=frame"
+    if kind == 'zoom':
+        return f",{persp('1+0.6*pow(max(0,1-T/1.2),3)', 60)},eq=brightness='-pow(max(0,1-t/0.5),2)':eval=frame"
+    return ''
+
+
+def _ending(kind, L, d):
+    st = max(0.0, L - d)
+    if kind == 'fade':
+        return f",fade=t=out:st={st:.3f}:d={d}"
+    if kind == 'blur':
+        return (f",split=2[e1][e2];[e2]scale=480:-2,gblur=sigma=12,scale=1920:1080[eb];"
+                f"[e1][eb]blend=all_expr='A*(1-clip((T-{st:.3f})/{d * 0.6:.3f},0,1))+B*clip((T-{st:.3f})/{d * 0.6:.3f},0,1)',"
+                f"fade=t=out:st={st + d * 0.5:.3f}:d={d * 0.5:.3f}")
+    return ''
+
+
+def _font(path=None):
+    for f in ([path] if path else []) + FONTS:
+        if f and os.path.isfile(f):
+            return f
+    return None
+
+
+def _title(text, font, dur=3.0):
+    """片头标题：淡入淡出的大字。路径里的冒号要转义；文字里的特殊字符直接去掉。"""
+    if not text or not font:
+        return ''
+    font = font.replace('\\', '/').replace(':', '\\:')
+    txt = ''.join(ch for ch in text.replace(':', '：') if ch not in "\\'%{}")
+    a = f"if(lt(t,0.4),t/0.4,if(lt(t,{dur - 0.5:.2f}),1,max(0,({dur:.2f}-t)/0.5)))"
+    return (f",drawtext=fontfile='{font}':text='{txt}':fontsize=96:fontcolor=white:borderw=4:bordercolor=black@0.6"
+            f":x=(w-text_w)/2:y=(h-text_h)/2:alpha='{a}':enable='lt(t,{dur:.2f})'")
 
 
 def render_shot(i, shot, n_shots, next_tr, out, cfg):
@@ -25,7 +79,7 @@ def render_shot(i, shot, n_shots, next_tr, out, cfg):
     segs = shot['segments']
     src0 = min(s['src'][0] for s in segs)
     src1 = max(s['src'][1] for s in segs)
-    v = [f"[0:v]fps=60,format=yuv444p,setsar=1,split={len(segs)}" + ''.join(f'[s{j}]' for j in range(len(segs)))]
+    v = [f"[0:v]fps=60,scale=1920:1080,format=yuv444p,setsar=1,split={len(segs)}" + ''.join(f'[s{j}]' for j in range(len(segs)))]
     a = [f"[0:a]aresample=48000,asplit={len(segs)}" + ''.join(f'[r{j}]' for j in range(len(segs)))]
     nL = 0
     for j, s in enumerate(segs):
@@ -55,7 +109,7 @@ def render_shot(i, shot, n_shots, next_tr, out, cfg):
     v.append(''.join(f'[p{j}]' for j in range(len(segs))) + f"concat=n={len(segs)}:v=1:a=0[cat]")
     # 入场 / 结尾推镜 / 开头 / 淡出
     head = HEADS.get(shot.get('transition_in')) if i > 0 else None
-    tail = TAIL_PUSH if next_tr == 'push' else None
+    tail = TAILS.get(next_tr)
     parts, labs = [], []
     hs = head[0] if head else 0
     ts = tail[0] if tail else 0
@@ -70,12 +124,10 @@ def render_shot(i, shot, n_shots, next_tr, out, cfg):
     else:
         last = '[cat]'
     post = ''
-    if i == 0 and r['opening'] == 'fade_blur':
-        post += (f",split=2[o1][o2];[o2]scale=480:-2,gblur=sigma=10,scale=1920:1080[ob];"
-                 f"[o1][ob]blend=all_expr='A*min(1,T/1.2)+B*max(0,1-T/1.2)',{persp('1+0.15*pow(max(0,1-T/1.6),2)', 60)},"
-                 "eq=brightness='-0.9*pow(max(0,1-t/1.0),2)':eval=frame")
-    if i == n_shots - 1 and r['fade_out']:
-        post += f",fade=t=out:st={L - r['fade_out']:.3f}:d={r['fade_out']}"
+    if i == 0:
+        post += _opening(r['opening']) + _title(r.get('title'), _font(r.get('font')))
+    if i == n_shots - 1 and r['fade_out'] and r.get('ending', 'fade') != 'none':
+        post += _ending(r.get('ending', 'fade'), L, r['fade_out'])
     parts.append(f"{last}null{post},trim=end_frame={nL},format=yuv420p[v]")
     a.append(''.join(f'[q{j}]' for j in range(len(segs))) + f"concat=n={len(segs)}:v=0:a=1,apad,atrim=end={L:.5f}[a]")
     g = ';'.join(v + parts + a)
@@ -109,4 +161,26 @@ def render(timeline, song_wav, out, cfg, workdir, log=print):
          f"[m][g1]sidechaincompress=threshold=0.12:ratio=2:attack=5:release=200[duck];"
          f"[duck][g2]amix=inputs=2:normalize=0:weights=1 {r['game_volume']},alimiter=limit=0.95[a]",
          '-map', '0:v', '-map', '[a]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '256k', '-movflags', '+faststart', out])
+    bumpers = [p for p in (r.get('intro_video'), out, r.get('outro_video')) if p]
+    if len(bumpers) > 1:
+        log('拼接片头 / 片尾视频')
+        body = os.path.join(workdir, 'body.mp4')
+        os.replace(out, body)
+        attach([body if p == out else p for p in bumpers], out, r)
     return D
+
+
+def attach(files, out, r):
+    """自定义片头 / 片尾视频和成片首尾相接：统一成 1080p60、48k 立体声；没有声音的补静音。"""
+    args, chains = [], []
+    for j, f in enumerate(files):
+        args += ['-i', f]
+        chains.append(f"[{j}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:-1:-1,"
+                      f"fps=60,setsar=1,format=yuv420p[v{j}]")
+        if has_audio(f):
+            chains.append(f"[{j}:a]aresample=48000,aformat=channel_layouts=stereo[a{j}]")
+        else:
+            chains.append(f"anullsrc=r=48000:cl=stereo,atrim=0:{media_duration(f):.3f}[a{j}]")
+    chains.append(''.join(f'[v{j}][a{j}]' for j in range(len(files))) + f"concat=n={len(files)}:v=1:a=1[v][a]")
+    run(args + ['-filter_complex', ';'.join(chains), '-map', '[v]', '-map', '[a]', '-c:v', 'libx264',
+                '-preset', r['preset'], '-crf', str(r['crf']), '-c:a', 'aac', '-b:a', '256k', '-movflags', '+faststart', out])

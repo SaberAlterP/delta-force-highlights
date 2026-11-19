@@ -158,5 +158,8 @@ CORS_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 
+# 只接受本机地址访问：挡住 DNS 重绑定（别的网站把域名解析到 127.0.0.1 来读写接口）。
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
 DETECT = DetectConfig()
 CLIP = ClipConfig()

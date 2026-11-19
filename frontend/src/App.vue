@@ -7,38 +7,60 @@ import SettingsPanel from './components/SettingsPanel.vue'
 import GuidePanel from './components/GuidePanel.vue'
 import UploadPanel from './components/UploadPanel.vue'
 import AnalyzePanel from './components/AnalyzePanel.vue'
+import MontageStudio from './montage/MontageStudio.vue'
+import CompressPanel from './components/CompressPanel.vue'
+import { compress, isBusy as compressing } from './compress'
 
 const store = useStore()
 let timer
 const settings = computed(() => store.workflow?.settings)
 const ready = computed(() => settings.value && settings.value.player_id && settings.value.watch_root && settings.value.output_root)
 const queued = computed(() => (store.workflow?.records || []).filter(r => ['waiting', 'processing'].includes(r.status)).length)
-const titles = { settings: '设置', guide: '使用指南', manual: '手动识别录像' }
+const titles = { settings: '设置', guide: '使用指南', manual: '手动识别录像', compress: '压缩视频' }
 
 // 对局列表收起后把宽度让给剪辑区；记住上次的选择
 const LS_SIDEBAR = 'sidebar_collapsed'
 const sidebarCollapsed = ref(localStorage.getItem(LS_SIDEBAR) === '1')
 watch(sidebarCollapsed, v => localStorage.setItem(LS_SIDEBAR, v ? '1' : '0'))
 
+// 两个平行的部分：自动剪素材（原有）/ 集锦剪辑（音乐卡点）
+const LS_MODE = 'df.mode'
+// 首页分成两部分：自动剪素材 / 集锦剪辑；打开时先回到首页
+const mode = ref('home')
+watch(mode, v => { if (v !== 'home') localStorage.setItem(LS_MODE, v) })
+const lastMode = localStorage.getItem(LS_MODE) === 'montage' ? 'montage' : 'clips'
+
 function onKey(e) { if (e.key === 'Escape') store.panel = '' }
+// 页面在后台标签页时不轮询，切回来立刻刷新一次
+function onVisible() { if (!document.hidden) store.refreshWorkflow() }
 onMounted(async () => {
   store.loadConfig()
   await store.refreshWorkflow()
   // 第一次打开、还没填设置时直接给出指南
-  if (store.workflow && !ready.value) store.panel = 'guide'
-  timer = setInterval(() => store.refreshWorkflow(), 4000)
+  if (store.workflow && !ready.value && mode.value === 'clips') store.panel = 'guide'
+  timer = setInterval(() => { if (!document.hidden) store.refreshWorkflow() }, 4000)
   window.addEventListener('keydown', onKey)
+  document.addEventListener('visibilitychange', onVisible)
 })
-onUnmounted(() => { clearInterval(timer); window.removeEventListener('keydown', onKey) })
+onUnmounted(() => {
+  clearInterval(timer)
+  window.removeEventListener('keydown', onKey)
+  document.removeEventListener('visibilitychange', onVisible)
+})
 watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playerId) store.setPlayerId(id) })
 </script>
 
 <template>
   <div class="app">
     <header class="topbar">
-      <div class="brand">
+      <div class="brand" style="cursor:pointer" title="回到首页" @click="mode = 'home'">
         <span class="mark">▲</span>
         <div><b>三角洲 · 多杀集锦</b><small>打完一局，自动剪好高光</small></div>
+      </div>
+      <div class="modes" role="tablist">
+        <button role="tab" :aria-selected="mode === 'home'" :class="{ on: mode === 'home' }" @click="mode = 'home'">首页</button>
+        <button role="tab" :aria-selected="mode === 'clips'" :class="{ on: mode === 'clips' }" @click="mode = 'clips'">自动剪素材</button>
+        <button role="tab" :aria-selected="mode === 'montage'" :class="{ on: mode === 'montage' }" @click="mode = 'montage'">集锦剪辑</button>
       </div>
       <button v-if="settings" class="status" :class="{ live: settings.enabled && ready }" @click="store.panel = 'settings'"
               :title="store.workflow.paused || (settings.enabled ? '点击打开设置' : '自动监控已暂停，点击打开设置')">
@@ -52,6 +74,9 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
       </button>
       <span class="spacer"></span>
       <nav>
+        <button class="ghost" title="把视频压成小文件，方便发给别人" @click="store.panel = 'compress'">
+          {{ compressing() ? `压缩中 ${Math.round(compress.progress * 100)}%` : compress.state === 'done' ? '压缩视频 ✓' : '压缩视频' }}
+        </button>
         <button class="ghost" @click="store.panel = 'manual'">手动识别</button>
         <button class="ghost" @click="store.panel = 'guide'">使用指南</button>
         <button :class="ready ? 'ghost' : 'primary'" @click="store.panel = 'settings'">设置</button>
@@ -60,10 +85,28 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
     <p v-if="store.workflowError" class="offline" role="alert">{{ store.workflowError }}</p>
     <p v-else-if="store.workflow?.error" class="offline" role="alert">后台提示：{{ store.workflow.error }}</p>
 
-    <main class="layout" :class="{ narrow: sidebarCollapsed }">
+    <main v-if="mode === 'home'" class="home">
+      <h1>你想做什么？</h1>
+      <div class="cards">
+        <button class="card" :class="{ last: lastMode === 'clips' }" @click="mode = 'clips'">
+          <span class="ico">🎯</span>
+          <b>自动剪素材</b>
+          <p>打完一局自动在录像里找出「N 秒内 M 杀」的精彩片段，整理成集锦包；也可以手动建片段、调整范围再导出。</p>
+          <em>进入 →</em>
+        </button>
+        <button class="card" :class="{ last: lastMode === 'montage' }" @click="mode = 'montage'">
+          <span class="ico">🎬</span>
+          <b>集锦剪辑</b>
+          <p>把多局高光按一首歌剪成音乐卡点视频：自动分析节拍、击杀对齐重音，配转场、开头结尾，可手动微调。</p>
+          <em>进入 →</em>
+        </button>
+      </div>
+    </main>
+    <main v-else-if="mode === 'clips'" class="layout" :class="{ narrow: sidebarCollapsed }">
       <GameList v-model:collapsed="sidebarCollapsed" />
       <GameDetail />
     </main>
+    <MontageStudio v-else />
 
     <Transition name="drawer">
       <div v-if="store.panel" class="scrim" @click.self="store.panel = ''">
@@ -72,6 +115,7 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
           <div class="drawer-body">
             <SettingsPanel v-if="store.panel === 'settings'" />
             <GuidePanel v-else-if="store.panel === 'guide'" />
+            <CompressPanel v-else-if="store.panel === 'compress'" />
             <div v-else-if="store.panel === 'manual'" class="manual">
               <p class="muted">不在录像文件夹里的视频，可以上传到这里识别和剪辑。上传的文件只存在工具缓存里。</p>
               <UploadPanel />
@@ -97,7 +141,20 @@ watch(() => store.workflow?.settings.player_id, (id) => { if (id && !store.playe
 .status .q { color: var(--accent); margin-left: 4px; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 6px #3fb95000; } }
 .spacer { flex: 1; }
+.modes { display: flex; padding: 3px; gap: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; }
+.modes button { border: 0; padding: 5px 14px; font-size: 13px; background: transparent; color: var(--muted); border-radius: 6px; }
+.modes button.on { background: var(--panel-2); color: var(--accent); font-weight: 600; }
 nav { display: flex; gap: 6px; } nav button { font-size: 13px; padding: 7px 14px; }
+.home { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; padding: 40px 18px; }
+.home h1 { margin: 0; font-size: 26px; letter-spacing: 1px; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 340px)); gap: 20px; }
+.card { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; text-align: left; padding: 26px; background: var(--panel); border: 1px solid var(--border); border-radius: 14px; transition: transform .15s, border-color .15s; }
+.card:hover { transform: translateY(-3px); border-color: var(--accent); }
+.card.last { border-color: #f5a62360; }
+.card .ico { font-size: 34px; } .card b { font-size: 19px; }
+.card p { margin: 0; font-size: 13px; line-height: 1.8; color: var(--muted); }
+.card em { margin-top: auto; font-style: normal; color: var(--accent); font-size: 13px; }
+@media (max-width: 760px) { .cards { grid-template-columns: 1fr; } }
 .offline { margin: 10px 18px 0; padding: 8px 12px; font-size: 12px; color: #f0a6a8; background: #2a1718; border: 1px solid #46282b; border-radius: 6px; }
 .layout { flex: 1; display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 14px; padding: 14px 18px; align-items: start; }
 .layout.narrow { grid-template-columns: 64px minmax(0, 1fr); }
